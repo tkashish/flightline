@@ -135,12 +135,25 @@ export class MotionTracker {
       compactness: count / ((maxx - minx + 1) * (maxy - miny + 1)),
       local: true
     };
-    // Coasting can pick up a little lateral drift; only reject sharp reversals.
+    // Coasting can pick up a little lateral drift; only reject sharp reversals
+    // and anti-gravity climb jumps (the classic late vertical hook).
     const vx = (cand.x - last.x) / gap, vy = (cand.y - last.y) / gap;
     const speed = Math.hypot(vx, vy), prevSpeed = Math.hypot(pvx, pvy);
     if (speed < .35 || speed > Math.max(8, prevSpeed * 2.4 + 2.5)) return [];
     if (prevSpeed > 1.2 && (vx * pvx + vy * pvy) / (speed * prevSpeed) < .55) return [];
     if (vy > 0.7) return [];
+    const predX = last.x + pvx * gap;
+    const predY = last.y + pvy * gap + .125 * gap * gap;
+    if (cand.y < predY - Math.max(3.5, gap * 1.05 + 1)) return [];
+    if (Math.hypot(cand.x - predX, cand.y - predY) > Math.max(7, prevSpeed * gap * .55 + 5 + gap)) return [];
+    const prevClimb = -pvy, climb = -vy;
+    if (prevSpeed < 12 && climb > prevClimb + .85 && climb > Math.max(1.0, prevClimb * 1.25 + .4)) return [];
+    if (prevSpeed > .7) {
+      const prevAng = Math.atan2(-pvy, pvx), ang = Math.atan2(-vy, vx);
+      const turn = Math.abs(Math.atan2(Math.sin(ang - prevAng), Math.cos(ang - prevAng)));
+      if (turn > .65) return [];
+      if (prevSpeed < 8 && climb > .8 && Math.abs(ang) > Math.abs(prevAng) + .45) return [];
+    }
     return [cand];
   }
   updateSpots(candidates) {
@@ -229,6 +242,26 @@ export class MotionTracker {
           // otherwise steal a long best track via extendsBest.
           if (track.points.length >= 6 && Math.hypot(pvx, pvy) > .8
             && (vx * pvx + vy * pvy) / (speed * Math.hypot(pvx, pvy)) < .65) continue;
+          // Ballistic coast: gravity reduces climb. A late "rocket up" or a
+          // diagonal→vertical hook is a sky speck, not the ball.
+          if (track.points.length >= 8) {
+            const prevSpeed = Math.hypot(pvx, pvy);
+            const predX = last.x + pvx * gap;
+            // Mild downward bias (~0.25 px/frame²) so coasting never expects a climb increase.
+            const predY = last.y + pvy * gap + .125 * gap * gap;
+            if (p.y < predY - Math.max(3.5, gap * 1.05 + 1)) continue;
+            if (Math.hypot(p.x - predX, p.y - predY) > Math.max(7, prevSpeed * gap * .55 + 5 + gap)) continue;
+            if (prevSpeed < 12) {
+              const prevClimb = -pvy, climb = -vy;
+              if (climb > prevClimb + .85 && climb > Math.max(1.0, prevClimb * 1.25 + .4)) continue;
+            }
+            if (prevSpeed > .7 && prevSpeed < 14) {
+              const prevAng = Math.atan2(-pvy, pvx), ang = Math.atan2(-vy, vx);
+              const turn = Math.abs(Math.atan2(Math.sin(ang - prevAng), Math.cos(ang - prevAng)));
+              if (turn > .65) continue;
+              if (prevSpeed < 8 && -vy > .8 && Math.abs(ang) > Math.abs(prevAng) + .45) continue;
+            }
+          }
           cost = change / tolerance + (gap - 1) * .55;
         } else if (vy > -1.5 || speed > d * .12) continue;
         const points = [...track.points, p];
@@ -253,7 +286,11 @@ export class MotionTracker {
         // started from an address-sized stationary ball.
         const addressLike = source.size >= 16 && source.quality >= .74 && (source.compactness ?? 1) >= .55;
         const betterAnchor = this.best && track.anchor > this.best.anchor + 6 && score >= this.best.score * .92;
-        if (addressLike && points.length >= 5 && rise > .065 && efficiency > .85 && totalCost / points.length < .85 && (!this.best || score > this.best.score || extendsBest || betterAnchor)) this.best = linked;
+        // A shorter sky-speck branch can score higher on rise; never demote a
+        // longer established flight unless the anchor is clearly better.
+        const demotesLonger = this.best && this.best.points.length >= 10
+          && points.length < this.best.points.length && !betterAnchor;
+        if (!demotesLonger && addressLike && points.length >= 5 && rise > .065 && efficiency > .85 && totalCost / points.length < .85 && (!this.best || score > this.best.score || extendsBest || betterAnchor)) this.best = linked;
       }
     }
     // Anchor a launch to a bright object that was stationary and has just left its position.
@@ -303,6 +340,38 @@ export class MotionTracker {
       const speed = Math.hypot(b.x - a.x, b.y - a.y) / Math.max(1, b.f - a.f);
       const climb = (a.y - b.y) / Math.max(1, b.f - a.f);
       if (speed > 0.85 || climb > 0.45) break;
+      end--;
+    }
+    // Chop a late anti-gravity hook: climb suddenly steepens, heading snaps
+    // toward vertical, or the tip climbs much harder than the mid-flight coast.
+    const midClimb = (() => {
+      if (end < 8) return null;
+      const climbs = [];
+      const lo = Math.floor(end * .35), hi = Math.floor(end * .75);
+      for (let i = Math.max(1, lo); i < hi; i++) {
+        const a = raw[i - 1], b = raw[i], dt = Math.max(1, b.f - a.f);
+        climbs.push((a.y - b.y) / dt);
+      }
+      if (!climbs.length) return null;
+      climbs.sort((a, b) => a - b);
+      return climbs[Math.floor(climbs.length / 2)];
+    })();
+    while (end > 6) {
+      const a = raw[end - 3], b = raw[end - 2], c = raw[end - 1];
+      const dt1 = Math.max(1, b.f - a.f), dt2 = Math.max(1, c.f - b.f);
+      const vx1 = (b.x - a.x) / dt1, vy1 = (b.y - a.y) / dt1;
+      const vx2 = (c.x - b.x) / dt2, vy2 = (c.y - b.y) / dt2;
+      const speed1 = Math.hypot(vx1, vy1), speed2 = Math.hypot(vx2, vy2);
+      const climb1 = -vy1, climb2 = -vy2;
+      const antiGravity = speed1 < 12 && climb2 > climb1 + .85 && climb2 > Math.max(1.0, climb1 * 1.25 + .4);
+      let sharpUp = false;
+      if (speed1 > .7 && speed2 > .5 && speed1 < 14) {
+        const ang1 = Math.atan2(-vy1, vx1), ang2 = Math.atan2(-vy2, vx2);
+        const turn = Math.abs(Math.atan2(Math.sin(ang2 - ang1), Math.cos(ang2 - ang1)));
+        sharpUp = turn > .65 || (speed1 < 8 && climb2 > .8 && Math.abs(ang2) > Math.abs(ang1) + .45);
+      }
+      const aboveCoast = midClimb != null && climb2 > midClimb + 1.6 && climb2 > 1.3;
+      if (!antiGravity && !sharpUp && !aboveCoast) break;
       end--;
     }
     const points = raw.slice(0, end).map(p => ({ t: p.t, x: p.x / this.w, y: p.y / this.h }));

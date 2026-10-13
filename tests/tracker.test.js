@@ -133,6 +133,47 @@ test('stops when the ball fades instead of creeping on a 1px glare tail', () => 
   assert.ok(points.at(-1).y * 1280 < 660, `did not rise: y=${points.at(-1).y * 1280}`);
   assert.ok(points.at(-1).t <= 22 / 30, `tail continued into glare t=${points.at(-1).t}`);
 });
+test('rejects a late anti-gravity vertical hook after diagonal coasting', () => {
+  // Fast launch, then a near-level diagonal coast. A sky speck then snaps upward.
+  const tracker = new MotionTracker(720, 1280);
+  let x = 440, y = 730, vx = 0, vy = 0;
+  for (let i = 0; i < 42; i++) {
+    tracker.frame = i;
+    const launched = Math.max(0, i - 12);
+    if (launched === 1) { vx = 2.4; vy = -14; }
+    if (launched > 0) {
+      x += vx; y += vy;
+      // Gravity: climb decays toward a shallow diagonal coast.
+      vy = Math.min(0.4, vy + 0.85);
+      vx *= 0.995;
+    }
+    const ball = {
+      x, y, t: i / 30, f: i,
+      size: launched === 0 ? 48 : Math.max(2, 24 - Math.min(launched, 10) * 2),
+      quality: .88, moving: launched > 0, roundness: 1.05, compactness: .82
+    };
+    const coasting = launched >= 16;
+    const hook = coasting ? {
+      x: x - 0.5,
+      y: y - 16 - (launched - 16) * 9,
+      t: i / 30, f: i,
+      size: 2, quality: .9, moving: true, roundness: 1, compactness: 1
+    } : null;
+    const candidates = hook ? [hook, ball] : [ball];
+    tracker.link(candidates.filter(p => p.moving), candidates);
+    tracker.updateSpots(candidates);
+  }
+  const points = tracker.result().points;
+  assert.ok(points.length >= 10, `${points.length} points found`);
+  const last = points.at(-1);
+  const mid = points[Math.floor(points.length * .7)];
+  const lateRise = (mid.y - last.y) * 1280;
+  const lateRun = Math.abs(last.x - mid.x) * 720;
+  assert.ok(lateRise < Math.max(14, lateRun * 1.25 + 8),
+    `hooked upward: lateRise=${lateRise.toFixed(1)} lateRun=${lateRun.toFixed(1)}`);
+  // True coast stays near-level; a vertical speck would be much higher.
+  assert.ok(last.y * 1280 > mid.y * 1280 - 40, `climbed into vertical speck y=${last.y * 1280}`);
+});
 test('rejects a sideways body highlight that steals the address seed', () => {
   // Mirrors PXL_20261011_184957300: address ball at mid-frame, then a large
   // bright clothing blob appears far to the side with almost no rise.

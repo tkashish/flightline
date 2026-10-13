@@ -1,5 +1,5 @@
-import { cameraAt, visiblePath } from './tracker.js?v=32';
-import { smoothFlight } from './curve.js?v=32';
+import { cameraAt, visiblePath } from './tracker.js?v=33';
+import { smoothFlight } from './curve.js?v=33';
 
 const $ = id => document.getElementById(id);
 const canvas = $('preview'), ctx = canvas.getContext('2d'), video = $('video');
@@ -198,7 +198,7 @@ async function analyze(signal) {
   const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
   const scan = document.createElement('canvas'); scan.width = Math.round(video.videoWidth * scale); scan.height = Math.round(video.videoHeight * scale);
   const scanCtx = scan.getContext('2d', { willReadFrequently: true });
-  const worker = new Worker(new URL('./worker.js?v=32', import.meta.url), { type: 'module' });
+  const worker = new Worker(new URL('./worker.js?v=33', import.meta.url), { type: 'module' });
   try {
     const params = new URLSearchParams(location.search), from = Math.max(0, Number(params.get('diagnosticFrom')) || 0);
     const diagnostics = params.has('diagnostics') ? { from, to: from + 1 } : null;
@@ -233,7 +233,7 @@ async function analyze(signal) {
     // faded. Keep the observed motion track only until that path is reliable.
     if (state.points.length) {
       updateStatus(`Possible flight found in ${state.points.length} frames.`, true);
-      $('previewHint').textContent = `Motion tracking beta · ${state.points.length} observed points · build 32`;
+      $('previewHint').textContent = `Motion tracking beta · ${state.points.length} observed points · build 33`;
     } else {
       updateStatus('No reliable flight found. Use “Adjust the flight” to place the ball at a few moments.', true);
       $('previewHint').textContent = 'The ball may be too small or blend into the background.';
