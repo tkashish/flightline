@@ -31,12 +31,18 @@ export function innovationPenalty(state, cand, dt, { posSigma = 18, velSigma = 9
   const speed = Math.hypot(state.vx, state.vy);
   const newVx = (cand.x - state.x) / dt;
   const newVy = (cand.y - state.y) / dt;
+  // Cold start: seed velocity is intentionally weak. Do not reject the first
+  // real ball measurement for "impossible acceleration" from ~0 → flight speed.
+  const nObs = state.nObs ?? 0;
+  if (nObs < 3 || speed < 40) {
+    return mahal;
+  }
   const dvx = newVx - state.vx;
   const dvy = newVy - state.vy;
   const accel = (dvx * dvx + dvy * dvy) / (velSigma * velSigma);
   // Heading flip penalty when already moving.
   let turn = 0;
-  if (speed > 25) {
+  if (speed > 80) {
     const prevAng = Math.atan2(-state.vy, state.vx);
     const ang = Math.atan2(-newVy, newVx);
     const dAng = Math.abs(Math.atan2(Math.sin(ang - prevAng), Math.cos(ang - prevAng)));
@@ -125,14 +131,17 @@ export function associateFlight({
         id: `${launch.id}:seed`
       }];
       for (const cand of seeds.slice(0, 4)) {
+        // Prefer launch-hinted px/s; fall back to a modest upward prior (not flight speed).
+        const seedVx = Number.isFinite(launch.vx) ? launch.vx : 0;
+        const seedVy = Number.isFinite(launch.vy) ? launch.vy : -120;
         beams.push({
           launchId: launch.id,
           x: cand.x,
           y: cand.y,
           t: frame.t,
           f: frame.f ?? frameIndex,
-          vx: 0,
-          vy: -40,
+          vx: seedVx,
+          vy: seedVy,
           missStreak: 0,
           missTime: 0,
           nObs: 1,
@@ -183,9 +192,12 @@ export function associateFlight({
       for (const cand of frame.candidates || []) {
         const predX = beam.x + beam.vx * dt;
         const predY = beam.y + beam.vy * dt;
-        if (Math.hypot(cand.x - predX, cand.y - predY) > gatePx + Math.hypot(beam.vx, beam.vy) * dt * 0.35) continue;
+        // Early observations need a wide gate: seed velocity is unreliable.
+        const early = beam.nObs < 4;
+        const gate = (early ? gatePx * 2.2 : gatePx) + Math.hypot(beam.vx, beam.vy) * dt * (early ? 0.9 : 0.35);
+        if (Math.hypot(cand.x - predX, cand.y - predY) > gate) continue;
         const innov = innovationPenalty(beam, cand, dt);
-        if (innov > 14) continue;
+        if (innov > (early ? 40 : 14)) continue;
         const newVx = (cand.x - beam.x) / dt;
         const newVy = (cand.y - beam.y) / dt;
         // Soft identity: jumping to a much larger blob mid-flight is suspicious.
@@ -257,6 +269,22 @@ export function associateFlight({
 
   // Trim trailing miss predictions — only observed points.
   const points = best.points.filter(p => p.status === 'observed');
+  const climb = points.length >= 2 ? points[0].y - points.at(-1).y : 0;
+  const span = points.length >= 2
+    ? Math.hypot(points.at(-1).x - points[0].x, points.at(-1).y - points[0].y)
+    : 0;
+  // Reject launch stumps / jitter that never leave the tee (common cold-start failure).
+  if (climb < 25 || span < 40) {
+    return {
+      status: 'no_reliable_track',
+      points: [],
+      score: best.score,
+      margin,
+      reasonCodes: ['no_ball_evidence'],
+      beams: scored.slice(0, 5).map(summarizeBeam)
+    };
+  }
+
   const status = points.length >= minObs + 4 ? 'tracked' : 'partial';
   const reasonCodes = [];
   if (vsRunner < 1.5 && runnerUp && runnerUp.launchId !== best.launchId) {
@@ -312,9 +340,20 @@ export function framesFromTracks(tracks, { sampleAllPoints = true } = {}) {
   return [...byT.values()].sort((a, b) => a.t - b.t);
 }
 
+function launchVelocityFromTrack(track) {
+  const pts = track?.points;
+  if (!pts || pts.length < 2) return { vx: 0, vy: -120 };
+  const a = pts[0], b = pts[Math.min(3, pts.length - 1)];
+  const dt = Math.max(1 / 240, (b.t ?? 0) - (a.t ?? 0));
+  return { vx: (b.x - a.x) / dt, vy: (b.y - a.y) / dt };
+}
+
 export function launchesFromHypotheses(hypotheses, tracks) {
   const out = [];
+  const trackById = new Map((tracks || []).filter(t => t?.launchId).map(t => [t.launchId, t]));
   for (const h of hypotheses || []) {
+    const track = trackById.get(h.id);
+    const vel = track ? launchVelocityFromTrack(track) : { vx: 0, vy: -120 };
     out.push({
       id: h.id,
       t: h.impactT ?? h.t,
@@ -322,23 +361,51 @@ export function launchesFromHypotheses(hypotheses, tracks) {
       y: h.anchorY ?? h.y,
       sourceSize: h.sourceSize,
       sourceQuality: h.sourceQuality,
-      confidence: h.confidence
+      confidence: h.confidence,
+      vx: vel.vx,
+      vy: vel.vy
     });
   }
   for (const track of tracks || []) {
     if (!track.launchId || !track.points?.[0]) continue;
     if (out.some(l => l.id === track.launchId)) continue;
     const p = track.points[0];
+    const vel = launchVelocityFromTrack(track);
     out.push({
       id: track.launchId,
       t: p.t,
       x: p.x,
       y: p.y,
       sourceSize: track.sourceSize ?? p.size,
-      sourceQuality: track.sourceQuality ?? p.quality
+      sourceQuality: track.sourceQuality ?? p.quality,
+      vx: vel.vx,
+      vy: vel.vy
     });
   }
   return out;
+}
+
+/** Merge detector frameLog with linked-track observations so mid-flight balls stay visible. */
+export function mergeAssocFrames(frameLog = [], trackFrames = []) {
+  const byT = new Map();
+  for (const frame of frameLog) {
+    byT.set(frame.t.toFixed(4), {
+      t: frame.t,
+      f: frame.f,
+      candidates: [...(frame.candidates || [])]
+    });
+  }
+  for (const frame of trackFrames) {
+    const key = frame.t.toFixed(4);
+    if (!byT.has(key)) byT.set(key, { t: frame.t, f: frame.f, candidates: [] });
+    const slot = byT.get(key);
+    for (const cand of frame.candidates || []) {
+      if (!slot.candidates.some(c => Math.hypot(c.x - cand.x, c.y - cand.y) < 2.5)) {
+        slot.candidates.push(cand);
+      }
+    }
+  }
+  return [...byT.values()].sort((a, b) => a.t - b.t);
 }
 
 /**

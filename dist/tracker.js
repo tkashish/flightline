@@ -3,6 +3,7 @@ import {
   associateFlight,
   framesFromTracks,
   launchesFromHypotheses,
+  mergeAssocFrames,
   toRendererResult
 } from './global-associate.js';
 
@@ -522,6 +523,9 @@ export class MotionTracker {
   }
   result() {
     if (this.engine === 'v2') return this.resultGlobal();
+    return this.resultLegacy();
+  }
+  resultLegacy() {
     this.best = this.selectBestTrack() || this.best;
     const raw = this.best?.points || [];
     // Drop a near-static glare tail; keep faint samples that are still climbing
@@ -596,14 +600,10 @@ export class MotionTracker {
     if (this.best) this.rememberHypothesis(this.best);
     for (const track of this.tracks.slice(0, 40)) this.rememberHypothesis(track);
 
-    const launches = launchesFromHypotheses(this.launchHypotheses, [
-      ...(this.best ? [this.best] : []),
-      ...this.tracks
-    ]);
-    // Prefer logged frame candidates; fall back to track-derived timeline.
-    const frames = this.frameLog.length
-      ? this.frameLog
-      : framesFromTracks([...(this.best ? [this.best] : []), ...this.tracks]);
+    const trackPool = [...(this.best ? [this.best] : []), ...this.tracks];
+    const launches = launchesFromHypotheses(this.launchHypotheses, trackPool);
+    // Detector candidates alone often drop the faint mid-flight ball; merge linked observations.
+    const frames = mergeAssocFrames(this.frameLog, framesFromTracks(trackPool));
     const assoc = associateFlight({
       frames,
       launches,
@@ -629,6 +629,26 @@ export class MotionTracker {
       confidence: h.confidence,
       pointCount: h.pointCount
     }));
+
+    // Safety: if beam search collapses to a launch stump while the linker found a
+    // real flight, keep the linked observations so the UI does not regress.
+    const legacy = this.resultLegacy();
+    const assocLen = rendered.points.length;
+    const legacyLen = legacy.points.length;
+    if (legacyLen >= 8 && (rendered.status === 'no_reliable_track' || assocLen < Math.max(5, legacyLen * 0.35))) {
+      return {
+        ...legacy,
+        engine: 'global-v2',
+        confidence: assoc.margin ?? legacyLen,
+        reasonCodes: [...new Set([...(assoc.reasonCodes || []), ...(legacy.reasonCodes || [])])],
+        diagnostics: {
+          ...(rendered.diagnostics || {}),
+          fallback: 'legacy-link',
+          assocStatus: rendered.status,
+          assocFrames: assocLen
+        }
+      };
+    }
     return rendered;
   }
 }

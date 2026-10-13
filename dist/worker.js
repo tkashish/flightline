@@ -1,6 +1,6 @@
-import { MotionTracker } from './tracker.js?v=46';
-import { BallRefiner } from './refiner.js?v=46';
-import { RoiEvidenceDetector } from './roi-evidence.js?v=46';
+import { MotionTracker } from './tracker.js?v=47';
+import { BallRefiner } from './refiner.js?v=47';
+import { RoiEvidenceDetector } from './roi-evidence.js?v=47';
 let tracker, diagnostics, frames, refiner, roiEvidence;
 self.onmessage = ({ data }) => {
   try {

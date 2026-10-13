@@ -6,6 +6,7 @@ import {
   launchPrior,
   framesFromTracks,
   launchesFromHypotheses,
+  mergeAssocFrames,
   toRendererResult
 } from '../dist/global-associate.js';
 
@@ -155,19 +156,54 @@ test('framesFromTracks + launchesFromHypotheses round-trip helpers', () => {
   const tracks = [{
     launchId: 'L1',
     sourceSize: 50,
-    points: [
-      { t: 1, f: 30, x: 10, y: 20, size: 50, quality: 0.9 },
-      { t: 1.1, f: 33, x: 12, y: 15, size: 40, quality: 0.88 }
-    ]
+    points: Array.from({ length: 8 }, (_, i) => ({
+      t: 1 + i / 30, f: 30 + i, x: 10 + i, y: 120 - i * 12, size: 50 - i, quality: 0.9
+    }))
   }];
   const frames = framesFromTracks(tracks);
-  assert.equal(frames.length, 2);
+  assert.equal(frames.length, 8);
   const launches = launchesFromHypotheses([], tracks);
   assert.equal(launches[0].id, 'L1');
+  assert.ok(launches[0].vy < 0);
   const rendered = toRendererResult(
     associateFlight({ frames, launches, minObs: 2, nullMargin: 0.5 }),
     { width: 100, height: 200, camera: [] }
   );
+  assert.ok(rendered.points.length >= 2);
   assert.ok(rendered.points[0].x <= 1);
   assert.equal(rendered.engine, 'global-v2');
+});
+
+test('associates a fast ball launch that would fail a cold-start accel gate', () => {
+  // ~80 px/frame climb ≈ real analysis-scale launch; seed starts near-stationary.
+  const frames = [];
+  for (let i = 0; i < 14; i++) {
+    const t = 2 + i / 30;
+    frames.push({
+      t,
+      f: Math.round(t * 30),
+      candidates: [{
+        t, x: 420 + i * 2, y: 980 - i * 80,
+        size: Math.max(12, 140 - i * 8), quality: 0.9, score: 18, id: `fast:${i}`
+      }]
+    });
+  }
+  const result = associateFlight({
+    frames,
+    launches: [{ id: 'ball', t: 2, x: 420, y: 980, sourceSize: 140, sourceQuality: 0.9 }],
+    imageHeight: 1280,
+    nullMargin: 1.5
+  });
+  assert.notEqual(result.status, 'no_reliable_track');
+  assert.ok(result.points.length >= 8, `n=${result.points.length}`);
+  assert.ok(result.points.at(-1).y < 500, `end y=${result.points.at(-1).y}`);
+});
+
+test('mergeAssocFrames unions track observations into detector frames', () => {
+  const merged = mergeAssocFrames(
+    [{ t: 1, f: 30, candidates: [{ x: 10, y: 10, id: 'a' }] }],
+    [{ t: 1, f: 30, candidates: [{ x: 50, y: 50, id: 'b' }] }, { t: 1.1, f: 33, candidates: [{ x: 55, y: 40, id: 'c' }] }]
+  );
+  assert.equal(merged.length, 2);
+  assert.equal(merged[0].candidates.length, 2);
 });
