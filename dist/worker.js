@@ -1,6 +1,7 @@
-import { MotionTracker } from './tracker.js?v=43';
-import { BallRefiner } from './refiner.js?v=43';
-let tracker, diagnostics, frames, refiner;
+import { MotionTracker } from './tracker.js?v=44';
+import { BallRefiner } from './refiner.js?v=44';
+import { RoiEvidenceDetector } from './roi-evidence.js?v=44';
+let tracker, diagnostics, frames, refiner, roiEvidence;
 self.onmessage = ({ data }) => {
   try {
     if (data.type === 'init') { tracker = new MotionTracker(data.width, data.height); diagnostics = data.diagnostics; frames = []; self.postMessage({ ok: true }); }
@@ -23,5 +24,26 @@ self.onmessage = ({ data }) => {
       self.postMessage({ point, finished: refiner.finished, prediction: refiner.predict(data.time + 1 / 30) });
     }
     if (data.type === 'refine-finish') self.postMessage({ points: refiner.result() });
+    // Phase 3: soft multi-candidate ROI evidence (not a single-ball decision).
+    if (data.type === 'roi-init') { roiEvidence = new RoiEvidenceDetector(data.options || {}); self.postMessage({ ok: true }); }
+    if (data.type === 'roi-frame') {
+      if (!roiEvidence) roiEvidence = new RoiEvidenceDetector();
+      const candidates = roiEvidence.detect(
+        new Uint8ClampedArray(data.buffer),
+        data.width,
+        data.height,
+        {
+          t: data.time,
+          left: data.left || 0,
+          top: data.top || 0,
+          prevRgba: data.prevBuffer ? new Uint8ClampedArray(data.prevBuffer) : null,
+          shift: data.shift || { x: 0, y: 0 },
+          motionHypotheses: data.motionHypotheses,
+          frames: data.frames
+        }
+      );
+      self.postMessage({ candidates });
+    }
+    if (data.type === 'roi-reset') { roiEvidence?.reset(); self.postMessage({ ok: true }); }
   } catch (error) { self.postMessage({ error: error.message }); }
 };

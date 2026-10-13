@@ -8,6 +8,7 @@
     "dev": "python3 -m http.server 5173 --bind 127.0.0.1 --directory dist",
     "eval:tracking": "node tests/evaluate-tracking.mjs --manifest tests/fixtures/local-manifest.json --engine legacy",
     "eval:compare": "node tests/compare-results.mjs",
-    "eval:contact-sheet": "node tests/contact-sheet.mjs"
+    "eval:contact-sheet": "node tests/contact-sheet.mjs",
+    "eval:manifest": "node tests/build-manifest.mjs"
   }
 }

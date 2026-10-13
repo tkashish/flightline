@@ -39,8 +39,9 @@ Next useful step: benchmark a properly licensed model against representative dow
 
 ```bash
 npm test
-# Real-video offline baseline (requires ffmpeg + local-manifest paths):
-cp tests/fixtures/manifest.example.json tests/fixtures/local-manifest.json
+# Build a local manifest from a folder of swings (gitignored output):
+npm run eval:manifest -- --dir ~/Downloads/Photos-1-001
+# Real-video offline baseline (requires ffmpeg):
 npm run eval:tracking -- --json docs/benchmark-runs/run.json --md docs/benchmark-runs/run.md
 ```
 

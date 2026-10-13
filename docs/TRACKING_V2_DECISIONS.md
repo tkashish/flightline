@@ -11,6 +11,8 @@
 
 | 2026-10-13 | Stream seek→analyze→release; drop ≤16s full RGBA prefetch | Keep prefetch for speed | Spec memory bound; ~1.8GB prefetch risk on 1080p×16s; seekable uploads don't need it |
 | 2026-10-13 | Rank final track with length-normalized `identityScore` + multi-coast seeds | Keep winner-takes-all `this.best` only | Early clothing creeps starve local search; Phase 2 requires competing launches |
+| 2026-10-13 | Add `RoiEvidenceDetector` soft top-K; do not fuse into `analyze()` yet | Reconnect `BallRefiner.detect()` | Spec forbids winner-take-all native refine; need Phase 4 association first |
+| 2026-10-13 | Chronological 65/35 tune/holdout split on Photos-1-001 by filename | Random frame split | Spec: never split neighboring frames; whole videos only |
 
 ## Rejected (for now)
 

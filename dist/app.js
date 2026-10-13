@@ -1,6 +1,6 @@
-import { cameraAt, visiblePath } from './tracker.js?v=43';
-import { smoothFlight } from './curve.js?v=43';
-import { plannedSampleTimes, isNearDuplicateTime, suggestRingCapacity, rgbaBytes } from './frame-source.js?v=43';
+import { cameraAt, visiblePath } from './tracker.js?v=44';
+import { smoothFlight } from './curve.js?v=44';
+import { plannedSampleTimes, isNearDuplicateTime, suggestRingCapacity, rgbaBytes } from './frame-source.js?v=44';
 
 const $ = id => document.getElementById(id);
 const canvas = $('preview'), ctx = canvas.getContext('2d'), video = $('video');
@@ -311,7 +311,7 @@ async function analyze(signal, labels = {}) {
   const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
   const scan = document.createElement('canvas'); scan.width = Math.round(video.videoWidth * scale); scan.height = Math.round(video.videoHeight * scale);
   const scanCtx = scan.getContext('2d', { willReadFrequently: true });
-  const worker = new Worker(new URL('./worker.js?v=43', import.meta.url), { type: 'module' });
+  const worker = new Worker(new URL('./worker.js?v=44', import.meta.url), { type: 'module' });
   try {
     const params = new URLSearchParams(location.search), from = Math.max(0, Number(params.get('diagnosticFrom')) || 0);
     const diagnostics = params.has('diagnostics') ? { from, to: from + 1 } : null;
