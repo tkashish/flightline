@@ -1,5 +1,5 @@
-import { MotionTracker } from './tracker.js?v=33';
-import { BallRefiner } from './refiner.js?v=33';
+import { MotionTracker } from './tracker.js?v=36';
+import { BallRefiner } from './refiner.js?v=36';
 let tracker, diagnostics, frames, refiner;
 self.onmessage = ({ data }) => {
   try {

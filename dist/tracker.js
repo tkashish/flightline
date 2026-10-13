@@ -21,6 +21,38 @@ export class MotionTracker {
     }
     return stationary - best > 1.4 ? shift : { x: 0, y: 0 };
   }
+  lastStepVelocity(track) {
+    const pts = track.points;
+    if (pts.length < 2) return { vx: 0, vy: -2, climb: 2, speed: 2 };
+    const b = pts.at(-2), c = pts.at(-1), dt = Math.max(1, c.f - b.f);
+    const vx = (c.x - b.x) / dt, vy = (c.y - b.y) / dt;
+    return { vx, vy, climb: -vy, speed: Math.hypot(vx, vy) };
+  }
+  recentVelocity(track) {
+    const pts = track.points;
+    if (pts.length < 2) return { vx: 0, vy: -2, climb: 2, speed: 2 };
+    const segs = [];
+    for (let i = Math.max(1, pts.length - 5); i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], dt = Math.max(1, b.f - a.f);
+      segs.push({ vx: (b.x - a.x) / dt, vy: (b.y - a.y) / dt });
+    }
+    const median = values => {
+      const sorted = [...values].sort((a, b) => a - b);
+      return sorted[Math.floor(sorted.length / 2)];
+    };
+    const vx = median(segs.map(s => s.vx)), vy = median(segs.map(s => s.vy));
+    return { vx, vy, climb: -vy, speed: Math.hypot(vx, vy) };
+  }
+  isBallisticHook(vx, vy, pvx, pvy) {
+    const speed = Math.hypot(vx, vy), prevSpeed = Math.hypot(pvx, pvy);
+    if (prevSpeed < .7 || speed < .35) return false;
+    const prevClimb = -pvy, climb = -vy;
+    if (prevSpeed < 12 && climb > prevClimb + .85 && climb > Math.max(1.0, prevClimb * 1.25 + .4)) return true;
+    const prevAng = Math.atan2(-pvy, pvx), ang = Math.atan2(-vy, vx);
+    const turn = Math.abs(Math.atan2(Math.sin(ang - prevAng), Math.cos(ang - prevAng)));
+    if (turn > .65) return true;
+    return prevSpeed < 8 && climb > .8 && Math.abs(ang) > Math.abs(prevAng) + .45;
+  }
   detect(rgba, t) {
     const w = this.w, h = this.h, n = w * h;
     const gray = new Uint8Array(n);
@@ -93,31 +125,46 @@ export class MotionTracker {
     const w = this.w, h = this.h;
     const last = track.points.at(-1), prev = track.points.at(-2);
     const gap = Math.max(1, this.frame - last.f);
-    if (gap > 8) return [];
+    if (gap > 10) return [];
+    const smooth = this.recentVelocity(track);
     const dt = Math.max(1, last.f - (prev?.f ?? last.f - 1));
-    const pvx = prev ? (last.x - prev.x) / dt : 0;
-    const pvy = prev ? (last.y - prev.y) / dt : -2;
+    const stepVx = prev ? (last.x - prev.x) / dt : smooth.vx;
+    const stepVy = prev ? (last.y - prev.y) / dt : smooth.vy;
+    // Step velocity for the search window; median velocity for validation.
+    const pvx = stepVx * .45 + smooth.vx * .55;
+    const pvy = stepVy * .45 + smooth.vy * .55;
     const px = Math.round(last.x + this.offset.x + pvx * gap);
     const py = Math.round(last.y + this.offset.y + pvy * gap);
-    if (py < 9 || py > h * .72 || px < 9 || px > w - 10) return [];
-    const rad = Math.min(22, 8 + gap * 3.5);
-    let peak = null;
+    if (py < 9 || py > h * .78 || px < 9 || px > w - 10) return [];
+    const highSky = last.y < h * .52;
+    const minV = highSky ? 125 : 145;
+    const minContrast = highSky ? 4 : 10;
+    const rad = Math.min(highSky ? 34 : 24, 9 + gap * (highSky ? 4.5 : 3.5));
+    const lastScreenY = last.y + this.offset.y;
+    let peak = null, nearPeak = null;
     for (let y = Math.max(9, py - rad); y <= Math.min(h - 10, py + rad); y++) {
       for (let x = Math.max(9, px - rad); x <= Math.min(w - 10, px + rad); x++) {
         const i = y * w + x, v = gray[i];
-        if (v < 145) continue;
+        if (v < minV) continue;
         const r = rgba[i * 4], g = rgba[i * 4 + 1], b = rgba[i * 4 + 2];
         // Blue-sky cast pushes chroma well past the global sky gate.
         if (Math.max(r, g, b) - Math.min(r, g, b) > 145) continue;
         const surround = (gray[i - 6] + gray[i + 6] + gray[i - w * 6] + gray[i + w * 6]) / 4;
         const contrast = v - surround;
-        if (contrast < 10) continue;
-        if (gray[i - 1] > v || gray[i + 1] > v || gray[i - w] > v || gray[i + w] > v) continue;
-        const score = contrast + (v - 140) * .2 - Math.hypot(x - px, y - py) * .7;
-        if (!peak || score > peak.score) peak = { x, y, v, contrast, score };
+        if (contrast < minContrast) continue;
+        // Faint sky balls can sit on a soft gradient; only require a crisp peak lower down.
+        if (!highSky && (gray[i - 1] > v || gray[i + 1] > v || gray[i - w] > v || gray[i + w] > v)) continue;
+        // Netting / horizon often outshines the ball below the predicted arc.
+        if (pvy <= .45 && y > lastScreenY + 28) continue;
+        const dist = Math.hypot(x - px, y - py);
+        const score = contrast * 1.1 + (v - 130) * .16 - dist * 1.55;
+        const hit = { x, y, v, contrast, score, dist };
+        if (dist <= 11 && (!nearPeak || score > nearPeak.score)) nearPeak = hit;
+        if (!peak || score > peak.score) peak = hit;
       }
     }
-    if (!peak || peak.contrast < 10) return [];
+    peak = nearPeak || peak;
+    if (!peak || peak.contrast < minContrast) return [];
     let sx = 0, sy = 0, count = 0, bright = 0, minx = peak.x, maxx = peak.x, miny = peak.y, maxy = peak.y;
     for (let y = peak.y - 1; y <= peak.y + 1; y++) for (let x = peak.x - 1; x <= peak.x + 1; x++) {
       const i = y * w + x, v = gray[i];
@@ -140,20 +187,18 @@ export class MotionTracker {
     const vx = (cand.x - last.x) / gap, vy = (cand.y - last.y) / gap;
     const speed = Math.hypot(vx, vy), prevSpeed = Math.hypot(pvx, pvy);
     if (speed < .35 || speed > Math.max(8, prevSpeed * 2.4 + 2.5)) return [];
-    if (prevSpeed > 1.2 && (vx * pvx + vy * pvy) / (speed * prevSpeed) < .55) return [];
-    if (vy > 0.7) return [];
+    const smoothSpeed = smooth.speed;
+    if (smoothSpeed > 1.2 && (vx * smooth.vx + vy * smooth.vy) / (speed * smoothSpeed) < .45) return [];
+    if (vy > (track.points.length >= 12 ? 1.35 : 0.85)) return [];
     const predX = last.x + pvx * gap;
-    const predY = last.y + pvy * gap + .125 * gap * gap;
-    if (cand.y < predY - Math.max(3.5, gap * 1.05 + 1)) return [];
-    if (Math.hypot(cand.x - predX, cand.y - predY) > Math.max(7, prevSpeed * gap * .55 + 5 + gap)) return [];
-    const prevClimb = -pvy, climb = -vy;
-    if (prevSpeed < 12 && climb > prevClimb + .85 && climb > Math.max(1.0, prevClimb * 1.25 + .4)) return [];
-    if (prevSpeed > .7) {
-      const prevAng = Math.atan2(-pvy, pvx), ang = Math.atan2(-vy, vx);
-      const turn = Math.abs(Math.atan2(Math.sin(ang - prevAng), Math.cos(ang - prevAng)));
-      if (turn > .65) return [];
-      if (prevSpeed < 8 && climb > .8 && Math.abs(ang) > Math.abs(prevAng) + .45) return [];
-    }
+    const predY = last.y + pvy * gap + (pvy > -.15 ? .125 : 0) * gap * gap;
+    const predDist = Math.hypot(cand.x - predX, cand.y - predY);
+    const maxPred = Math.max(10, smoothSpeed * gap * .7 + 7 + gap * 1.15);
+    if (predDist > maxPred) return [];
+    const allowRise = smooth.vy <= -.12 && predDist <= 12
+      && cand.y < predY - 1 && cand.y >= predY - Math.max(16, gap * 2.5 + 5);
+    if (cand.y < predY - Math.max(4, gap * 1.2 + 1) && !allowRise) return [];
+    if (this.isBallisticHook(vx, vy, smooth.vx, smooth.vy)) return [];
     return [cand];
   }
   updateSpots(candidates) {
@@ -175,7 +220,7 @@ export class MotionTracker {
     for (const track of this.tracks) {
       const last = track.points.at(-1), gap = this.frame - last.f;
       // Established mid-flight tracks can miss a few dim sky observations.
-      if (gap > (track.points.length >= 6 ? 8 : 5)) continue;
+      if (gap > (track.points.length >= 12 ? 10 : track.points.length >= 6 ? 8 : 5)) continue;
       next.push(track);
       // Browser impact frames often skip one observation; allow a single-frame
       // hole while the track is still establishing itself.
@@ -200,6 +245,14 @@ export class MotionTracker {
         if (track.points.length >= 4 && p.size > last.size * 1.35 + 2 && p.size > source.size * .35) continue;
         const vx = (p.x - last.x) / gap, vy = (p.y - last.y) / gap;
         const speed = Math.hypot(vx, vy);
+        if (track.points.length >= 10 && gap <= 2) {
+          const ls = this.lastStepVelocity(track);
+          const stepUp = last.y - p.y;
+          if (stepUp > 8 && ls.climb < 1.2) continue;
+          if (stepUp > 4 && ls.speed < 3.5) continue;
+          if (stepUp > 2.5 && ls.climb < 1.5 && -vy > ls.climb + 2) continue;
+        }
+        if (p.size <= 2 && last.y - p.y > 6 + gap * 3 && track.points.length >= 10) continue;
         if (speed < .3 || speed > d * .16) continue;
         // Seeds always start with two points, so rising motion must be enforced
         // here rather than in a never-reached single-point branch.
@@ -223,8 +276,9 @@ export class MotionTracker {
             ? Math.max(long ? 0.4 : 0.75, recentSpeed * .35)
             : Math.max(long ? 0.35 : 0.6, recentSpeed * .28);
           if (speed < minSpeed) continue;
-          // Reject clear descent back toward the golfer, but allow apex coasting.
-          if (vy > (long ? 0.55 : -.15) && (source.y - p.y) / this.h > .04) continue;
+          // Reject dropping back toward the tee, but allow upper-sky apex fall.
+          const upperSky = last.y < this.h * .52;
+          if (vy > (long ? (upperSky ? 1.35 : 0.55) : -.15) && (source.y - p.y) / this.h > .04) continue;
         }
         let cost = 0;
         if (previous) {
@@ -240,27 +294,28 @@ export class MotionTracker {
           if (speed > 3 && Math.hypot(pvx, pvy) > 3 && (vx * pvx + vy * pvy) / (speed * Math.hypot(pvx, pvy)) < .4) continue;
           // Mid-flight coasting must stay aligned; a left/right sky speck can
           // otherwise steal a long best track via extendsBest.
-          if (track.points.length >= 6 && Math.hypot(pvx, pvy) > .8
-            && (vx * pvx + vy * pvy) / (speed * Math.hypot(pvx, pvy)) < .65) continue;
+          const align = (vx * pvx + vy * pvy) / (speed * Math.hypot(pvx, pvy) || 1);
+          if (track.points.length >= 6 && Math.hypot(pvx, pvy) > 1.4 && speed > 1.6 && align < .55) continue;
+          // Sky speck "teleport up" while the coast is shallow.
+          if (track.points.length >= 10 && last.y - p.y > 10 && -vy > Math.max(2, -pvy + 1.2)) continue;
           // Ballistic coast: gravity reduces climb. A late "rocket up" or a
           // diagonal→vertical hook is a sky speck, not the ball.
           if (track.points.length >= 8) {
-            const prevSpeed = Math.hypot(pvx, pvy);
-            const predX = last.x + pvx * gap;
-            // Mild downward bias (~0.25 px/frame²) so coasting never expects a climb increase.
-            const predY = last.y + pvy * gap + .125 * gap * gap;
-            if (p.y < predY - Math.max(3.5, gap * 1.05 + 1)) continue;
-            if (Math.hypot(p.x - predX, p.y - predY) > Math.max(7, prevSpeed * gap * .55 + 5 + gap)) continue;
-            if (prevSpeed < 12) {
-              const prevClimb = -pvy, climb = -vy;
-              if (climb > prevClimb + .85 && climb > Math.max(1.0, prevClimb * 1.25 + .4)) continue;
-            }
-            if (prevSpeed > .7 && prevSpeed < 14) {
-              const prevAng = Math.atan2(-pvy, pvx), ang = Math.atan2(-vy, vx);
-              const turn = Math.abs(Math.atan2(Math.sin(ang - prevAng), Math.cos(ang - prevAng)));
-              if (turn > .65) continue;
-              if (prevSpeed < 8 && -vy > .8 && Math.abs(ang) > Math.abs(prevAng) + .45) continue;
-            }
+            const smooth = this.recentVelocity(track);
+            const spvx = smooth.vx, spvy = smooth.vy;
+            const prevSpeed = smooth.speed;
+            const predX = last.x + spvx * gap;
+            const predY = last.y + spvy * gap + (spvy > -.15 ? .125 : 0) * gap * gap;
+            const predDist = Math.hypot(p.x - predX, p.y - predY);
+            const maxPred = Math.max(9, prevSpeed * gap * .65 + 6 + gap * 1.1);
+            const nearPred = predDist <= Math.max(5.5, gap * 1.15);
+            const allowRise = spvy <= -.25 && nearPred
+              && p.y < predY - 2 && p.y >= predY - Math.max(10, gap * 1.6 + 3);
+            if (predDist > maxPred) continue;
+            if (p.y < predY - Math.max(3.5, gap * 1.05 + 1) && !allowRise) continue;
+            const hook = this.isBallisticHook(vx, vy, spvx, spvy);
+            if (hook && !(p.local && nearPred)) continue;
+            if (!nearPred && spvy <= .35 && predDist > 14 && p.y > last.y + 30) continue;
           }
           cost = change / tolerance + (gap - 1) * .55;
         } else if (vy > -1.5 || speed > d * .12) continue;
@@ -290,7 +345,10 @@ export class MotionTracker {
         // longer established flight unless the anchor is clearly better.
         const demotesLonger = this.best && this.best.points.length >= 10
           && points.length < this.best.points.length && !betterAnchor;
-        if (!demotesLonger && addressLike && points.length >= 5 && rise > .065 && efficiency > .85 && totalCost / points.length < .85 && (!this.best || score > this.best.score || extendsBest || betterAnchor)) this.best = linked;
+        const extendOk = extendsBest && points.length >= 8 && efficiency > .68 && totalCost / points.length < 1.05;
+        if (!demotesLonger && addressLike && points.length >= 5 && rise > .065
+          && (extendOk || (efficiency > .85 && totalCost / points.length < .85))
+          && (!this.best || score > this.best.score || extendOk || betterAnchor)) this.best = linked;
       }
     }
     // Anchor a launch to a bright object that was stationary and has just left its position.

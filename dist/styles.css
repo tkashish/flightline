@@ -42,7 +42,6 @@ body.is-fullscreen{overflow:hidden}
 .focus-style-label{font-size:8px;letter-spacing:1.4px;text-transform:uppercase;color:#8a987a;margin:0 0 10px}
 .focus-style .swatches{margin-bottom:14px}
 .focus-style .range-label{margin-bottom:6px}
-.focus-style #focusWidth{width:100%;margin-bottom:12px}
 .focus-style .check-label{margin-bottom:8px}
 @media(max-width:760px){
   .focus-style{top:auto;bottom:120px;right:12px;left:12px;width:auto}

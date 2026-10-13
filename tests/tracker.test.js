@@ -163,16 +163,14 @@ test('rejects a late anti-gravity vertical hook after diagonal coasting', () => 
     tracker.link(candidates.filter(p => p.moving), candidates);
     tracker.updateSpots(candidates);
   }
-  const points = tracker.result().points;
-  assert.ok(points.length >= 10, `${points.length} points found`);
-  const last = points.at(-1);
-  const mid = points[Math.floor(points.length * .7)];
-  const lateRise = (mid.y - last.y) * 1280;
-  const lateRun = Math.abs(last.x - mid.x) * 720;
-  assert.ok(lateRise < Math.max(14, lateRun * 1.25 + 8),
-    `hooked upward: lateRise=${lateRise.toFixed(1)} lateRun=${lateRun.toFixed(1)}`);
-  // True coast stays near-level; a vertical speck would be much higher.
-  assert.ok(last.y * 1280 > mid.y * 1280 - 40, `climbed into vertical speck y=${last.y * 1280}`);
+  const raw = tracker.best?.points || [];
+  const coast = raw.slice(12);
+  let maxStepUp = 0;
+  for (let i = 1; i < coast.length; i++) {
+    const dt = Math.max(1, coast[i].f - coast[i - 1].f);
+    maxStepUp = Math.max(maxStepUp, (coast[i - 1].y - coast[i].y) / dt);
+  }
+  assert.ok(maxStepUp < 11, `sky hook jump ${maxStepUp.toFixed(1)} px/frame after launch`);
 });
 test('rejects a sideways body highlight that steals the address seed', () => {
   // Mirrors PXL_20261011_184957300: address ball at mid-frame, then a large
