@@ -68,6 +68,25 @@ Re-run offline baseline expected to match `tracking-v1` observation counts withi
 
 ---
 
+## Phase 1 complete + Phase 2 start — 2026-10-13
+
+| Field | Value |
+| --- | --- |
+| Command | `node tests/evaluate-tracking.mjs … --json docs/benchmark-runs/milestone-p1p2-legacy.json` |
+| `npm test` | **39 pass / 0 fail** |
+| Compare vs baseline | `pxl_qa` 62→62, `pxl300_qa` 17→17 (**parity**) |
+
+### Code changes
+
+- **Phase 1:** Removed full-duration RGBA prefetch. Seekable uploads stream one frame at a time into the worker (transfer + release). Play-sampling remains only when seeking is broken.
+- **Phase 2 (partial):** Launch hypotheses stamped with `sourceSize` / `launchId`; `identityScore` length-normalizes ranking; local coast searches top-3 identities; `result()` re-selects via `selectBestTrack()` and returns `launchHypotheses`.
+
+### Accuracy claim
+
+**None yet on real labeled holdout.** Synthetic “creeping golfer” unit test still passes. Historical `golf_slow_mo` / `golf_swing` still **NOT RUN** (missing files).
+
+---
+
 ## After later milestones
 
 Append a new dated section per engine change. Always compare with `node tests/compare-results.mjs docs/benchmark-runs/baseline-legacy.json <new.json>`. Never overwrite the baseline file; write `milestone-N-<engine>.json`.

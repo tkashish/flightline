@@ -4,6 +4,9 @@ export class MotionTracker {
     this.w = width; this.h = height; this.previous = null;
     this.tracks = []; this.best = null; this.frame = 0;
     this.offset = { x: 0, y: 0 }; this.camera = []; this.spots = []; this.seedBlockedUntil = -1;
+    // Phase 2: retain competing launch identities until final selection.
+    this.launchHypotheses = [];
+    this.nextLaunchId = 1;
   }
   cameraShift(current) {
     if (!this.previous) return { x: 0, y: 0 };
@@ -118,9 +121,37 @@ export class MotionTracker {
     this.updateSpots(candidates); this.frame++;
     return candidates.length;
   }
+  coastTracks() {
+    // Keep local search on up to 3 launch identities — not only this.best —
+    // so an early clothing highlight cannot starve the real ball of ROI evidence.
+    const pool = [];
+    const seen = new Set();
+    const consider = track => {
+      if (!track || track.points.length < 6) return;
+      const key = track.launchId || `${track.points[0].f}:${track.points[0].x|0}:${track.points[0].y|0}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      pool.push(track);
+    };
+    consider(this.best);
+    for (const track of this.tracks) consider(track);
+    pool.sort((a, b) => this.identityScore(b) - this.identityScore(a));
+    return pool.slice(0, 3);
+  }
   localFlightCandidates(gray, rgba, t, shift) {
-    // Only coast the current best flight — searching every track latches onto sky junk.
-    const track = this.best;
+    const out = [];
+    const used = new Set();
+    for (const track of this.coastTracks()) {
+      for (const cand of this.localFlightCandidatesForTrack(track, gray, rgba, t)) {
+        const key = `${cand.x.toFixed(1)}:${cand.y.toFixed(1)}`;
+        if (used.has(key)) continue;
+        used.add(key);
+        out.push(cand);
+      }
+    }
+    return out;
+  }
+  localFlightCandidatesForTrack(track, gray, rgba, t) {
     if (!track || track.points.length < 6) return [];
     const w = this.w, h = this.h;
     const last = track.points.at(-1), prev = track.points.at(-2);
@@ -181,7 +212,8 @@ export class MotionTracker {
       quality: bright / count / 255, size: Math.min(4, count), moving: true,
       roundness: (maxx - minx + 1) / (maxy - miny + 1),
       compactness: count / ((maxx - minx + 1) * (maxy - miny + 1)),
-      local: true
+      local: true,
+      launchId: track.launchId
     };
     // Coasting can pick up a little lateral drift; only reject sharp reversals
     // and anti-gravity climb jumps (the classic late vertical hook).
@@ -202,6 +234,58 @@ export class MotionTracker {
     if (cand.y < predY - Math.max(5, gap * 1.3 + 1) && !allowRise) return [];
     if (this.isBallisticHook(vx, vy, smooth.vx, smooth.vy)) return [];
     return [cand];
+  }
+  identityScore(track) {
+    if (!track?.points?.length) return -Infinity;
+    const points = track.points;
+    const source = points[0];
+    const last = points.at(-1);
+    const rise = (source.y - last.y) / this.h;
+    const n = points.length;
+    // Length-normalized score: long clothing creeps must not beat a solid address launch.
+    const meanCost = (track.cost || 0) / Math.max(1, n);
+    const sizeBonus = Math.min(40, Math.sqrt(track.sourceSize ?? source.size ?? 0) * 2.8);
+    const compact = track.sourceCompactness ?? source.compactness ?? 1;
+    const shapeBonus = Math.min(compact, 1) * 10;
+    const anchor = track.anchor || 0;
+    return sizeBonus + shapeBonus + anchor * 1.1 + Math.min(.75, Math.max(0, rise)) * 36
+      + Math.min(6, Math.sqrt(n)) * 2.2 - meanCost * 2.4;
+  }
+  rememberHypothesis(track) {
+    if (!track || (track.sourceSize ?? track.points[0]?.size ?? 0) < 6) return;
+    if (!track.launchId) track.launchId = `L${this.nextLaunchId++}`;
+    const snap = {
+      id: track.launchId,
+      impactT: track.points[0]?.t ?? null,
+      anchorX: track.points[0]?.x ?? null,
+      anchorY: track.points[0]?.y ?? null,
+      sourceSize: track.sourceSize ?? track.points[0]?.size ?? null,
+      sourceQuality: track.sourceQuality ?? track.points[0]?.quality ?? null,
+      confidence: this.identityScore(track),
+      pointCount: track.points.length,
+      score: track.score
+    };
+    const idx = this.launchHypotheses.findIndex(h => h.id === snap.id);
+    if (idx >= 0) this.launchHypotheses[idx] = snap;
+    else this.launchHypotheses.push(snap);
+    this.launchHypotheses.sort((a, b) => b.confidence - a.confidence);
+    this.launchHypotheses = this.launchHypotheses.slice(0, 12);
+  }
+  selectBestTrack() {
+    const pool = [];
+    const seen = new Set();
+    const add = track => {
+      if (!track?.points || track.points.length < 5) return;
+      const key = track.launchId || `${track.points[0].f}:${track.points[0].x|0}:${track.points[0].y|0}:${track.points.length}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      pool.push(track);
+    };
+    add(this.best);
+    for (const track of this.tracks) add(track);
+    if (!pool.length) return null;
+    pool.sort((a, b) => this.identityScore(b) - this.identityScore(a));
+    return pool[0];
   }
   updateSpots(candidates) {
     const used = new Set();
@@ -336,8 +420,15 @@ export class MotionTracker {
         const totalCost = track.cost + cost;
         // Prefer rise and anchor over a long creeping tail of noise.
         const score = Math.min(8, Math.sqrt(points.length)) * 4 + Math.min(.75, rise) * 42 + track.anchor * 1.35 - totalCost * 1.5;
-        const linked = { points, cost: totalCost, score, length, anchor: track.anchor };
+        const linked = {
+          points, cost: totalCost, score, length, anchor: track.anchor,
+          launchId: track.launchId,
+          sourceSize: track.sourceSize ?? source.size,
+          sourceQuality: track.sourceQuality ?? source.quality,
+          sourceCompactness: track.sourceCompactness ?? source.compactness
+        };
         next.push(linked);
+        this.rememberHypothesis(linked);
         const extendsBest = this.best && points.length > this.best.points.length && points.includes(this.best.points.at(-1));
         // Tiny clothing/glare seeds can rocket upward; only promote tracks that
         // started from an address-sized stationary ball.
@@ -350,7 +441,9 @@ export class MotionTracker {
         const extendOk = extendsBest && points.length >= 8 && efficiency > .68 && totalCost / points.length < 1.05;
         if (!demotesLonger && addressLike && points.length >= 5 && rise > .065
           && (extendOk || (efficiency > .85 && totalCost / points.length < .85))
-          && (!this.best || score > this.best.score || extendOk || betterAnchor)) this.best = linked;
+          && (!this.best || this.identityScore(linked) > this.identityScore(this.best) || extendOk || betterAnchor)) {
+          this.best = linked;
+        }
       }
     }
     // Anchor a launch to a bright object that was stationary and has just left its position.
@@ -379,18 +472,34 @@ export class MotionTracker {
         const anchor = spot.quality * 30 + Math.min(20, spot.seen) * .5 - distance / d * 100 + sizeBoost + shapeBoost;
         // Stamp the source frame beside the first moving observation so the
         // initial launch velocity is not diluted by a stale stationary timestamp.
-        next.push({ points: [{ ...spot, f: p.f - 1, t: Math.max(0, p.t - 1 / 30) }, p], cost: 0, score: anchor + 7, anchor, length: distance });
+        const seeded = {
+          points: [{ ...spot, f: p.f - 1, t: Math.max(0, p.t - 1 / 30) }, p],
+          cost: 0,
+          score: anchor + 7,
+          anchor,
+          length: distance,
+          launchId: `L${this.nextLaunchId++}`,
+          sourceSize: spot.size,
+          sourceQuality: spot.quality,
+          sourceCompactness: spot.compactness ?? 1
+        };
+        next.push(seeded);
+        this.rememberHypothesis(seeded);
       }
     }
-    next.sort((a, b) => b.score - a.score);
+    next.sort((a, b) => this.identityScore(b) - this.identityScore(a));
     // Limit duplicate histories ending on the same observations.
     const counts = new Map();
     this.tracks = next.filter(track => {
       const p = track.points.at(-1), key = `${p.f}:${p.x}:${p.y}`, count = counts.get(key) || 0;
       counts.set(key, count + 1); return count < 3;
     }).slice(0, 160);
+    // Refresh provisional best from identity-aware ranking (not only raw score).
+    const ranked = this.selectBestTrack();
+    if (ranked) this.best = ranked;
   }
   result() {
+    this.best = this.selectBestTrack() || this.best;
     const raw = this.best?.points || [];
     // Drop a near-static glare tail; keep faint samples that are still climbing
     // even when screen-space speed has fallen below ~1px/frame.
@@ -439,7 +548,22 @@ export class MotionTracker {
       end--;
     }
     const points = raw.slice(0, end).map(p => ({ t: p.t, x: p.x / this.w, y: p.y / this.h }));
-    return { points, camera: this.camera, engine: 'motion-beta', observedFrames: points.length };
+    return {
+      points,
+      camera: this.camera,
+      engine: 'motion-beta',
+      observedFrames: points.length,
+      launchHypotheses: this.launchHypotheses.slice(0, 8).map(h => ({
+        id: h.id,
+        impactT: h.impactT,
+        anchorX: h.anchorX != null ? h.anchorX / this.w : null,
+        anchorY: h.anchorY != null ? h.anchorY / this.h : null,
+        sourceSize: h.sourceSize,
+        confidence: h.confidence,
+        pointCount: h.pointCount
+      })),
+      selectedLaunchId: this.best?.launchId || null
+    };
   }
 }
 

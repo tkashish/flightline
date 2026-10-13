@@ -9,8 +9,12 @@
 | 2026-10-13 | Keep `BallRefiner` code but do not wire into `analyze` | Re-enable immediately | Clothing/airplane false positives; needs multi-candidate identity-safe design (Phase 3–4) |
 | 2026-10-13 | Gitignore `local-manifest.json` and annotation exports | Commit user paths | Privacy; paths are machine-specific |
 
+| 2026-10-13 | Stream seek→analyze→release; drop ≤16s full RGBA prefetch | Keep prefetch for speed | Spec memory bound; ~1.8GB prefetch risk on 1080p×16s; seekable uploads don't need it |
+| 2026-10-13 | Rank final track with length-normalized `identityScore` + multi-coast seeds | Keep winner-takes-all `this.best` only | Early clothing creeps starve local search; Phase 2 requires competing launches |
+
 ## Rejected (for now)
 
 - Relaxing global sky brightness thresholds without ROI evidence (raises false alarms).
 - Hard image-space gravity (`ay = g`) without camera calibration.
 - Treating `smoothFlight` extensions as observed detections in metrics.
+- Reconnecting legacy `BallRefiner.detect()` as sole late-flight decider.

@@ -42,7 +42,8 @@ File picker / drop
 | --- | --- |
 | HTMLVideo seek/decode on main thread | Runs |
 | Analysis downscale ≤1280 | Runs |
-| Prefetch all RGBA frames if duration ≤16s | Runs (memory-heavy) |
+| Prefetch all RGBA frames if duration ≤16s | **Removed** — seekable path streams one frame at a time |
+| Play-sample cache when seeking broken | Runs (fallback only) |
 | Assumed 30 Hz sample times `t=i/30` | Runs |
 | Camera translation estimate (±6 px) | Runs |
 | Bright/contrast blob candidates | Runs |
