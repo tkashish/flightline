@@ -15,7 +15,9 @@ function parseArgs(argv) {
     dir: null,
     out: 'tests/fixtures/local-manifest.json',
     holdoutRatio: 0.35,
-    includeQa: true
+    includeQa: true,
+    limit: null,
+    stride: null
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -23,6 +25,8 @@ function parseArgs(argv) {
     else if (a === '--out') out.out = argv[++i];
     else if (a === '--holdout-ratio') out.holdoutRatio = Number(argv[++i]);
     else if (a === '--no-qa') out.includeQa = false;
+    else if (a === '--limit') out.limit = Number(argv[++i]);
+    else if (a === '--stride') out.stride = Number(argv[++i]);
   }
   return out;
 }
@@ -36,13 +40,27 @@ function expandHome(p) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.dir) {
-    console.error('Usage: node tests/build-manifest.mjs --dir <video-folder> [--out path] [--holdout-ratio 0.35]');
+    console.error('Usage: node tests/build-manifest.mjs --dir <video-folder> [--out path] [--limit 8] [--holdout-ratio 0.35]');
+    console.error('  --limit 8   default smoke size (spread across folder). Use --limit 0 for all clips.');
     process.exit(1);
   }
   const dir = expandHome(args.dir);
-  const names = (await readdir(dir))
+  let names = (await readdir(dir))
     .filter(n => /\.(mp4|mov|webm|m4v)$/i.test(n))
     .sort();
+  // Default to a small smoke subset — full corpus is opt-in via --limit 0 or a high limit.
+  if (args.stride && args.stride > 1) {
+    names = names.filter((_, i) => i % args.stride === 0);
+  }
+  if (args.limit == null) args.limit = 8;
+  if (args.limit > 0 && names.length > args.limit) {
+    // Spread picks across the session instead of taking only the first N.
+    const picks = [];
+    for (let i = 0; i < args.limit; i++) {
+      picks.push(names[Math.round(i * (names.length - 1) / Math.max(1, args.limit - 1))]);
+    }
+    names = [...new Set(picks)];
+  }
   const holdoutCount = Math.max(1, Math.round(names.length * args.holdoutRatio));
   const tuneEnd = Math.max(0, names.length - holdoutCount);
 
