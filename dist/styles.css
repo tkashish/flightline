@@ -70,3 +70,14 @@ body.is-fullscreen{overflow:hidden}
   opacity:0;
 }
 label.dropzone{cursor:pointer;box-sizing:border-box}
+
+/* Processing: let the scrubbing video show through so the stage is not a flat green plate. */
+.busy-overlay{
+  background:linear-gradient(180deg, #142c25b8 0%, #142c25d6 100%);
+  backdrop-filter:blur(2px);
+  gap:6px;
+  padding:24px;
+}
+.busy-overlay strong{font-size:22px;letter-spacing:-.3px;text-shadow:0 1px 8px #0a1812a0}
+.busy-overlay p{font-size:13px;color:#d5e2cc;max-width:28rem}
+.busy-overlay progress{width:min(70%, 420px);height:8px;margin:10px 0 18px}

@@ -1,7 +1,7 @@
-import { cameraAt, visiblePath } from './tracker.js?v=49';
-import { smoothFlight } from './curve.js?v=49';
-import { plannedSampleTimes, isNearDuplicateTime, suggestRingCapacity, rgbaBytes } from './frame-source.js?v=49';
-import { normalizeTrackReport } from './track-status.js?v=49';
+import { cameraAt, visiblePath } from './tracker.js?v=50';
+import { smoothFlight } from './curve.js?v=50';
+import { plannedSampleTimes, isNearDuplicateTime, suggestRingCapacity, rgbaBytes } from './frame-source.js?v=50';
+import { normalizeTrackReport } from './track-status.js?v=50';
 
 const $ = id => document.getElementById(id);
 const canvas = $('preview'), ctx = canvas.getContext('2d'), video = $('video');
@@ -116,7 +116,9 @@ function workerCall(worker, message, signal, transfer = []) {
     const done = event => { clean(); event.data.error ? reject(new Error(event.data.error)) : resolve(event.data); };
     const failed = () => { clean(); reject(new Error('Automatic detection could not start.')); };
     const aborted = () => { clean(); reject(abortError()); };
-    const timeout = setTimeout(() => { clean(); reject(new Error('Detection timed out.')); }, 20000);
+    // Finish/association can exceed 20s on long clips; frames stay short.
+    const timeoutMs = message?.type === 'finish' ? 120000 : 30000;
+    const timeout = setTimeout(() => { clean(); reject(new Error('Detection timed out.')); }, timeoutMs);
     worker.addEventListener('message', done, { once: true }); worker.addEventListener('error', failed, { once: true }); signal.addEventListener('abort', aborted, { once: true });
     worker.postMessage(message, transfer);
   });
@@ -174,24 +176,33 @@ async function openSwing(file, signal, { title = 'Opening your swing…', detail
   canvas.width = Math.max(2, Math.round(video.videoWidth * scale / 2) * 2);
   canvas.height = Math.max(2, Math.round(video.videoHeight * scale / 2) * 2);
   enterEditorChrome(file);
+  // Paint the first frame immediately so the stage is never a blank green plate.
+  await seek(video, 0, signal).catch(() => {});
+  draw();
 }
+let uploadGeneration = 0;
 async function upload(file) {
   if (!file) return;
   if (state.busy) {
     state.controller?.abort();
     setBusy(false);
   }
+  const generation = ++uploadGeneration;
   state.bulk = false;
   state.controller = new AbortController(); const signal = state.controller.signal;
   let loaded = false;
   try {
     await openSwing(file, signal);
+    if (generation !== uploadGeneration) return;
     loaded = true;
-    updateStatus('Looking for a continuous ball flight…');
+    updateStatus('Finding your flight… scanning frames.');
     await analyze(signal);
+    if (generation !== uploadGeneration) return;
     const reviewAt = state.points.length ? Math.max(0, video.duration - .001) : 0;
     await seek(video, reviewAt, signal);
+    draw();
   } catch (error) {
+    if (generation !== uploadGeneration) return;
     if (!loaded) resetDemo();
     if (error.name !== 'AbortError') toast(error.message);
     if (loaded && !state.exportable) {
@@ -206,7 +217,12 @@ async function upload(file) {
     } else if (loaded && error.name === 'AbortError') {
       updateStatus('Cancelled.', true, state.trackStatus || '');
     }
-  } finally { setBusy(false); state.controller = null; }
+  } finally {
+    if (generation === uploadGeneration) {
+      setBusy(false);
+      state.controller = null;
+    }
+  }
 }
 function downloadBlob(blob, baseName) {
   const extension = blob.type.startsWith('video/mp4') ? 'mp4' : 'webm';
@@ -392,7 +408,7 @@ async function analyze(signal, labels = {}) {
   const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
   const scan = document.createElement('canvas'); scan.width = Math.round(video.videoWidth * scale); scan.height = Math.round(video.videoHeight * scale);
   const scanCtx = scan.getContext('2d', { willReadFrequently: true });
-  const worker = new Worker(new URL('./worker.js?v=49', import.meta.url), { type: 'module' });
+  const worker = new Worker(new URL('./worker.js?v=50', import.meta.url), { type: 'module' });
   try {
     const params = new URLSearchParams(location.search), from = Math.max(0, Number(params.get('diagnosticFrom')) || 0);
     const diagnostics = params.has('diagnostics') ? { from, to: from + 1 } : null;
@@ -412,8 +428,9 @@ async function analyze(signal, labels = {}) {
     let duplicateStamps = 0;
     let peakResidentFrames = 0;
     $('busyText').textContent = canSeek
-      ? 'Analyzing frames…'
+      ? `Analyzing 0 of ${frames} frames…`
       : 'Reading video frames… Keep this tab visible.';
+    updateStatus(`Finding your flight… 0/${frames} frames`);
     for (let i = 0; i < frames; i++) {
       if (signal.aborted) throw abortError();
       let sample = playbackCache?.[i];
@@ -421,18 +438,24 @@ async function analyze(signal, labels = {}) {
       const t = Number.isFinite(sample.t) ? sample.t : targets[i];
       if (sample.duplicate || isNearDuplicateTime(prevT, t)) duplicateStamps++;
       prevT = t;
+      // Keep the preview alive under the overlay so processing is visible.
+      if (i % 3 === 0) draw();
       // Transfer ownership of the buffer to the worker — no long-lived RGBA cache.
       const pixels = sample.pixels;
       sample.pixels = null;
       if (playbackCache) playbackCache[i] = null;
       peakResidentFrames = Math.max(peakResidentFrames, 1);
       await workerCall(worker, { type: 'frame', buffer: pixels.buffer, time: t }, signal, [pixels.buffer]);
+      const pct = Math.round((i + 1) / frames * 100);
       $('progress').value = (i + 1) / frames * 100;
-      if (i % 15 === 0) {
+      if (i % 5 === 0 || i + 1 === frames) {
         const prefix = state.bulk ? `${labels.detail?.split(' · ')[0] || 'Bulk'} · ` : '';
-        $('busyText').textContent = `${prefix}Analyzing frame ${i + 1} of ${frames} · ${Math.round((i + 1) / frames * 100)}%`;
+        $('busyText').textContent = `${prefix}Analyzing frame ${i + 1} of ${frames} · ${pct}%`;
+        updateStatus(`Finding your flight… ${i + 1}/${frames} · ${pct}%`);
       }
     }
+    $('busyText').textContent = 'Selecting the best ball path…';
+    updateStatus('Finding your flight… finishing association.');
     canvas.dataset.frameTimingDiagnostic = JSON.stringify({
       sampleFps: 30,
       planned: frames,
@@ -493,7 +516,9 @@ function drawTrace(time) {
 function draw() {
   ctx.fillStyle = '#152b21'; ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (state.demo) { if (scene.complete && scene.naturalWidth) ctx.drawImage(scene, 0, 0, canvas.width, canvas.height); }
-  else if (video.readyState >= 2) ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  else if (video.readyState >= 2 || (video.videoWidth > 0 && video.readyState >= 1)) {
+    try { ctx.drawImage(video, 0, 0, canvas.width, canvas.height); } catch { /* decode gap */ }
+  }
   drawTrace(state.demo ? state.time : video.currentTime);
   if (state.editing) {
     const offset = cameraAt(state.camera, video.currentTime);
