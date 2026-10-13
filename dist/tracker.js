@@ -1,12 +1,22 @@
 // Experimental, model-free candidate detection. All positions are observed, never extrapolated.
+import {
+  associateFlight,
+  framesFromTracks,
+  launchesFromHypotheses,
+  toRendererResult
+} from './global-associate.js';
+
 export class MotionTracker {
-  constructor(width, height) {
+  constructor(width, height, { engine = 'legacy' } = {}) {
     this.w = width; this.h = height; this.previous = null;
     this.tracks = []; this.best = null; this.frame = 0;
     this.offset = { x: 0, y: 0 }; this.camera = []; this.spots = []; this.seedBlockedUntil = -1;
     // Phase 2: retain competing launch identities until final selection.
     this.launchHypotheses = [];
     this.nextLaunchId = 1;
+    // Phase 4: per-frame soft candidates for offline global association.
+    this.engine = engine === 'v2' || engine === 'global-v2' ? 'v2' : 'legacy';
+    this.frameLog = [];
   }
   cameraShift(current) {
     if (!this.previous) return { x: 0, y: 0 };
@@ -108,6 +118,18 @@ export class MotionTracker {
     this.previous = gray;
     candidates.sort((a, b) => b.quality - a.quality);
     this.lastCandidates = candidates;
+    if (this.engine === 'v2') {
+      this.frameLog.push({
+        t,
+        f: this.frame,
+        candidates: candidates.slice(0, 28).map(c => ({
+          t: c.t, x: c.x, y: c.y, size: c.size, quality: c.quality,
+          score: (c.quality ?? 0.7) * 18 + Math.min(8, Math.sqrt(c.size ?? 1)),
+          id: `c:${this.frame}:${c.x | 0}:${c.y | 0}`,
+          moving: c.moving
+        }))
+      });
+    }
     // Impact frames can produce >1000 movers. The real ball is often outside the
     // brightest 120, so keep bright seeds plus every trackable mid-size mover.
     const moving = candidates.filter(p => p.moving);
@@ -499,6 +521,7 @@ export class MotionTracker {
     if (ranked) this.best = ranked;
   }
   result() {
+    if (this.engine === 'v2') return this.resultGlobal();
     this.best = this.selectBestTrack() || this.best;
     const raw = this.best?.points || [];
     // Drop a near-static glare tail; keep faint samples that are still climbing
@@ -562,8 +585,51 @@ export class MotionTracker {
         confidence: h.confidence,
         pointCount: h.pointCount
       })),
-      selectedLaunchId: this.best?.launchId || null
+      selectedLaunchId: this.best?.launchId || null,
+      status: points.length >= 2 ? 'tracked' : 'no_reliable_track',
+      reasonCodes: points.length >= 2 ? [] : ['insufficient_visible_frames']
     };
+  }
+  resultGlobal() {
+    // Ensure hypotheses exist even if ranking never promoted this.best.
+    this.best = this.selectBestTrack() || this.best;
+    if (this.best) this.rememberHypothesis(this.best);
+    for (const track of this.tracks.slice(0, 40)) this.rememberHypothesis(track);
+
+    const launches = launchesFromHypotheses(this.launchHypotheses, [
+      ...(this.best ? [this.best] : []),
+      ...this.tracks
+    ]);
+    // Prefer logged frame candidates; fall back to track-derived timeline.
+    const frames = this.frameLog.length
+      ? this.frameLog
+      : framesFromTracks([...(this.best ? [this.best] : []), ...this.tracks]);
+    const assoc = associateFlight({
+      frames,
+      launches,
+      imageWidth: this.w,
+      imageHeight: this.h,
+      beamWidth: 28,
+      maxMiss: 8,
+      minObs: 5,
+      nullMargin: 2.2
+    });
+    const rendered = toRendererResult(assoc, {
+      width: this.w,
+      height: this.h,
+      camera: this.camera,
+      engine: 'global-v2'
+    });
+    rendered.launchHypotheses = this.launchHypotheses.slice(0, 8).map(h => ({
+      id: h.id,
+      impactT: h.impactT,
+      anchorX: h.anchorX != null ? h.anchorX / this.w : null,
+      anchorY: h.anchorY != null ? h.anchorY / this.h : null,
+      sourceSize: h.sourceSize,
+      confidence: h.confidence,
+      pointCount: h.pointCount
+    }));
+    return rendered;
   }
 }
 

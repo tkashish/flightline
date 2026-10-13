@@ -63,8 +63,8 @@ export async function runTrackerOffline(input, {
   engine = 'legacy',
   onProgress = null
 } = {}) {
-  if (engine !== 'legacy') {
-    throw new Error(`Engine "${engine}" is not implemented yet; use --engine legacy for baseline.`);
+  if (engine !== 'legacy' && engine !== 'v2' && engine !== 'global-v2') {
+    throw new Error(`Unknown engine "${engine}". Use legacy or v2.`);
   }
   const meta = await probeVideo(input);
   // Prefer an explicit size; otherwise match browser analysis sizing on upright geometry.
@@ -72,7 +72,7 @@ export async function runTrackerOffline(input, {
     ? { width, height, scale: width / meta.width }
     : analysisSize(meta.width, meta.height, longEdge);
   const w = sized.width, h = sized.height;
-  const tracker = new MotionTracker(w, h);
+  const tracker = new MotionTracker(w, h, { engine: engine === 'legacy' ? 'legacy' : 'v2' });
   const frameSize = w * h * 4;
   const vf = `fps=${fps},scale=${w}:${h}`;
   const proc = spawn('ffmpeg', [
@@ -108,7 +108,7 @@ export async function runTrackerOffline(input, {
   const result = tracker.result();
   const elapsedMs = performance.now() - started;
   return {
-    engine: 'legacy',
+    engine: tracker.engine === 'v2' ? 'v2' : 'legacy',
     meta: { ...meta, analysisWidth: w, analysisHeight: h, sampleFps: fps },
     result,
     frameCount: index,

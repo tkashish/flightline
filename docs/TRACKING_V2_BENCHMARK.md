@@ -108,6 +108,20 @@ Shot-level pass/fail still requires source-pixel annotations (none yet). Report 
 
 ---
 
+## Phase 4 — global association (`engine=v2`) — 2026-10-13
+
+| Field | Value |
+| --- | --- |
+| Module | `dist/global-associate.js` |
+| Unit tests | clothing-vs-ball, airplane non-steal, length bias, abstention, L/R launch — **pass** |
+| UI flag | `http://127.0.0.1:5173/?engine=v2` |
+| CLI | `npm run eval:tracking -- --engine v2 --limit 4` |
+| Default UI | still `legacy` until labeled smoke comparison favors v2 |
+
+No labeled shot-level claim yet.
+
+---
+
 ## After later milestones
 
 Append a new dated section per engine change. Always compare with `node tests/compare-results.mjs docs/benchmark-runs/baseline-legacy.json <new.json>`. Never overwrite the baseline file; write `milestone-N-<engine>.json`.

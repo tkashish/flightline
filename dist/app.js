@@ -1,6 +1,6 @@
-import { cameraAt, visiblePath } from './tracker.js?v=44';
-import { smoothFlight } from './curve.js?v=44';
-import { plannedSampleTimes, isNearDuplicateTime, suggestRingCapacity, rgbaBytes } from './frame-source.js?v=44';
+import { cameraAt, visiblePath } from './tracker.js?v=45';
+import { smoothFlight } from './curve.js?v=45';
+import { plannedSampleTimes, isNearDuplicateTime, suggestRingCapacity, rgbaBytes } from './frame-source.js?v=45';
 
 const $ = id => document.getElementById(id);
 const canvas = $('preview'), ctx = canvas.getContext('2d'), video = $('video');
@@ -311,11 +311,12 @@ async function analyze(signal, labels = {}) {
   const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
   const scan = document.createElement('canvas'); scan.width = Math.round(video.videoWidth * scale); scan.height = Math.round(video.videoHeight * scale);
   const scanCtx = scan.getContext('2d', { willReadFrequently: true });
-  const worker = new Worker(new URL('./worker.js?v=44', import.meta.url), { type: 'module' });
+  const worker = new Worker(new URL('./worker.js?v=45', import.meta.url), { type: 'module' });
   try {
     const params = new URLSearchParams(location.search), from = Math.max(0, Number(params.get('diagnosticFrom')) || 0);
     const diagnostics = params.has('diagnostics') ? { from, to: from + 1 } : null;
-    await workerCall(worker, { type: 'init', width: scan.width, height: scan.height, diagnostics }, signal);
+    const engine = params.get('engine') === 'v2' ? 'v2' : 'legacy';
+    await workerCall(worker, { type: 'init', width: scan.width, height: scan.height, diagnostics, engine }, signal);
     const targets = plannedSampleTimes(video.duration, 30);
     const frames = targets.length;
     const canSeek = analysisSeekable();
@@ -368,10 +369,12 @@ async function analyze(signal, labels = {}) {
     curveSource = null;
     // Native-resolution refinement was locking onto clothing after the ball
     // faded. Keep the observed motion track only until that path is reliable.
-    if (state.points.length) {
-      updateStatus(`Possible flight found in ${state.points.length} frames · ${video.videoWidth}×${video.videoHeight}`, true);
+    if (result.status === 'no_reliable_track' || state.points.length < 2) {
+      updateStatus('Could not reliably identify the ball in this video.', true);
+    } else if (result.status === 'partial') {
+      updateStatus(`Partial flight · ${state.points.length} observed frames · ${video.videoWidth}×${video.videoHeight}`, true);
     } else {
-      updateStatus('No reliable flight found. Use “Adjust the flight” to place the ball at a few moments.', true);
+      updateStatus(`Possible flight found in ${state.points.length} frames · ${video.videoWidth}×${video.videoHeight}`, true);
     }
   } finally { worker.terminate(); }
 }

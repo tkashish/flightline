@@ -1,10 +1,15 @@
-import { MotionTracker } from './tracker.js?v=44';
-import { BallRefiner } from './refiner.js?v=44';
-import { RoiEvidenceDetector } from './roi-evidence.js?v=44';
+import { MotionTracker } from './tracker.js?v=45';
+import { BallRefiner } from './refiner.js?v=45';
+import { RoiEvidenceDetector } from './roi-evidence.js?v=45';
 let tracker, diagnostics, frames, refiner, roiEvidence;
 self.onmessage = ({ data }) => {
   try {
-    if (data.type === 'init') { tracker = new MotionTracker(data.width, data.height); diagnostics = data.diagnostics; frames = []; self.postMessage({ ok: true }); }
+    if (data.type === 'init') {
+      tracker = new MotionTracker(data.width, data.height, { engine: data.engine || 'legacy' });
+      diagnostics = data.diagnostics;
+      frames = [];
+      self.postMessage({ ok: true });
+    }
     if (data.type === 'frame') {
       tracker.detect(new Uint8ClampedArray(data.buffer), data.time);
       if (diagnostics && data.time >= diagnostics.from && data.time <= diagnostics.to) frames.push({

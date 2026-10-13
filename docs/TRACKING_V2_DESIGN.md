@@ -1,6 +1,6 @@
 # Tracking V2 — design (living doc)
 
-**Status:** Phase 0 complete (harness). Algorithm phases 1–5 not implemented yet.  
+**Status:** Phases 0–3 landed; Phase 4 global association implemented behind `engine=v2`.  
 **Constraint:** Browser-local upload → automatic ball track → export. No runtime manual ball/impact clicks.
 
 ## Target pipeline
@@ -18,8 +18,8 @@ Timestamp-aware decode (bounded cache)
 
 | Flag | Meaning |
 | --- | --- |
-| `legacy` | Current `MotionTracker` path (baseline). Used by app today and by `evaluate-tracking.mjs`. |
-| `v2` | Future path behind a feature flag. **Not implemented** as of Phase 0. |
+| `legacy` | Forward `MotionTracker` ranking (default in UI). |
+| `v2` | Same detectors + Phase 4 beam association at `result()` (`?engine=v2` or `--engine v2`). Returns `status` / `reasonCodes` / may abstain. |
 
 ## Coordinate systems
 
