@@ -1,10 +1,12 @@
-import { cameraAt, visiblePath } from './tracker.js?v=37';
-import { smoothFlight } from './curve.js?v=37';
+import { cameraAt, visiblePath } from './tracker.js?v=41';
+import { smoothFlight } from './curve.js?v=41';
 
 const $ = id => document.getElementById(id);
 const canvas = $('preview'), ctx = canvas.getContext('2d'), video = $('video');
-const TRACE_WIDTH = 7;
-const state = { demo: true, time: 0, playing: true, points: [], camera: [], color: '#f5fa9b', glow: true, hold: true, showTrace: true, editing: false, busy: false, url: null, file: null, controller: null, history: [] };
+// Fat enough that small mid-flight wobble reads as one continuous ribbon.
+const TRACE_WIDTH = 14;
+const BULK_LIMIT = 25;
+const state = { demo: true, time: 0, playing: true, points: [], camera: [], color: '#f5fa9b', glow: true, hold: true, showTrace: true, editing: false, busy: false, url: null, file: null, controller: null, history: [], bulk: false };
 const scene = new Image(); scene.src = 'scene.svg';
 let lastTime = performance.now(), toastTimer, audioContext, audioSource, monitor, curveSource, curvePoints;
 const demoPoints = Array.from({ length: 100 }, (_, i) => {
@@ -16,16 +18,14 @@ function toast(message) { clearTimeout(toastTimer); $('toast').textContent = mes
 function setBusy(busy, title = '', detail = '') {
   state.busy = busy; $('busyOverlay').hidden = !busy;
   $('busyTitle').textContent = title; $('busyText').textContent = detail; $('progress').value = 0;
-  for (const id of ['play', 'timeline', 'editTrace', 'newVideo', 'dropzone', 'styleControls', 'replay', 'toggleTrace', 'backFrame', 'forwardFrame', 'undo', 'clearTrace', 'doneEditing']) $(id).disabled = busy;
-  const canExport = !busy && !state.demo && state.points.length >= 2;
-  $('export').disabled = !canExport;
-  $('focusExport').disabled = !canExport;
+  for (const id of ['play', 'timeline', 'editTrace', 'newVideo', 'dropzone', 'styleControls', 'toggleTrace', 'backFrame', 'forwardFrame', 'undo', 'clearTrace', 'doneEditing']) $(id).disabled = busy;
+  $('export').disabled = !(!busy && !state.demo && state.points.length >= 2);
 }
 function setEditing(editing) {
   state.editing = editing; $('manualTools').hidden = !editing; $('stage').classList.toggle('editing', editing);
   $('editTrace').hidden = editing;
-  if (editing) { video.pause(); state.playing = false; $('previewHint').textContent = 'Find the ball, then click to place a point. Scrub to continue.'; }
-  else $('previewHint').textContent = 'Review the flight before exporting.';
+  if (editing) { video.pause(); state.playing = false; updateStatus('Find the ball, then click to place a point. Scrub to continue.'); }
+  else if (!state.demo && state.points.length) updateStatus(state.points.length < 2 ? 'Place at least two points at different times to make a trace.' : `Possible flight found in ${state.points.length} frames.`, state.points.length < 2);
 }
 function abortError() { return new DOMException('Operation cancelled', 'AbortError'); }
 function seek(element, time, signal) {
@@ -64,43 +64,60 @@ function workerCall(worker, message, signal, transfer = []) {
 }
 function updateStatus(message, warning = false) {
   $('resultStatus').textContent = message; $('resultStatus').classList.toggle('warn', warning);
-  const canExport = !state.busy && !state.demo && state.points.length >= 2;
-  $('export').disabled = !canExport;
-  $('focusExport').disabled = !canExport;
+  $('export').disabled = !(!state.busy && !state.demo && state.points.length >= 2);
 }
 function resetDemo() {
   video.pause(); video.removeAttribute('src'); video.load();
   if (state.url) URL.revokeObjectURL(state.url);
-  Object.assign(state, { demo: true, time: 0, playing: true, url: null, file: null, points: [], camera: [], history: [] });
+  Object.assign(state, { demo: true, time: 0, playing: true, url: null, file: null, points: [], camera: [], history: [], bulk: false });
   canvas.width = 1280; canvas.height = 720;
   $('uploadPanel').hidden = false; $('editPanel').hidden = true;
-  $('demoCaption').hidden = false; $('stageTag').hidden = false; $('stageNote').hidden = false;
-  $('previewTitle').textContent = 'A LITTLE FLIGHTLINE MAGIC'; $('clipMeta').textContent = 'INTERACTIVE DEMO';
-  $('timeline').max = 8; $('duration').textContent = '0:08'; $('replay').textContent = 'Replay demo ↻';
-  setEditing(false); $('previewHint').textContent = 'A great shot. An even better replay.';
+  $('timeline').max = 8; $('duration').textContent = '0:08';
+  setEditing(false);
+}
+function isVideoFile(file) {
+  return !!file && (file.type.startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(file.name));
+}
+function validateVideoFile(file) {
+  if (!isVideoFile(file)) return 'Choose a video file: MP4, MOV, or WebM.';
+  if (file.size > 250 * 1024 * 1024) return 'This clip is over 250 MB. Trim or compress it, then try again.';
+  return null;
+}
+function collectVideoFiles(list) {
+  return [...list].filter(isVideoFile);
+}
+function enterEditorChrome(file) {
+  $('uploadPanel').hidden = true; $('editPanel').hidden = false;
+  $('timeline').max = video.duration; $('duration').textContent = format(video.duration);
+  if (!$('exportNote').querySelector('a')) $('exportNote').textContent = 'Original audio · Up to 1080p · No watermark';
+  state.demo = false; state.file = file; state.playing = false;
+}
+async function openSwing(file, signal, { title = 'Opening your swing…', detail = 'Your video stays on this device.' } = {}) {
+  const invalid = validateVideoFile(file);
+  if (invalid) throw new Error(invalid);
+  video.pause(); setEditing(false);
+  setBusy(true, title, detail);
+  if (state.url) URL.revokeObjectURL(state.url);
+  state.url = URL.createObjectURL(file); state.points = []; state.camera = []; state.history = [];
+  curveSource = null;
+  await loadVideo(state.url, signal);
+  if (!Number.isFinite(video.duration) || video.duration <= 0) throw new Error('This video has no readable duration. Try an H.264 MP4.');
+  if (video.duration > 30.05) throw new Error('Please trim your video to one swing, 30 seconds or less.');
+  const scale = Math.min(1, 1920 / Math.max(video.videoWidth, video.videoHeight), 1080 / Math.min(video.videoWidth, video.videoHeight));
+  canvas.width = Math.max(2, Math.round(video.videoWidth * scale / 2) * 2);
+  canvas.height = Math.max(2, Math.round(video.videoHeight * scale / 2) * 2);
+  enterEditorChrome(file);
 }
 async function upload(file) {
   if (!file || state.busy) return;
-  if (!file.type.startsWith('video/') && !/\.(mp4|mov|webm|m4v)$/i.test(file.name)) return toast('Choose a video file: MP4, MOV, or WebM.');
-  if (file.size > 250 * 1024 * 1024) return toast('This clip is over 250 MB. Trim or compress it, then try again.');
+  state.bulk = false;
   state.controller = new AbortController(); const signal = state.controller.signal;
-  video.pause(); setEditing(false); setBusy(true, 'Opening your swing…', 'Your video stays on this device.');
-  if (state.url) URL.revokeObjectURL(state.url);
-  state.url = URL.createObjectURL(file); state.points = []; state.camera = []; state.history = [];
   let loaded = false;
   try {
-    await loadVideo(state.url, signal);
-    if (!Number.isFinite(video.duration) || video.duration <= 0) throw new Error('This video has no readable duration. Try an H.264 MP4.');
-    if (video.duration > 30.05) throw new Error('Please trim your video to one swing, 30 seconds or less.');
-    loaded = true; state.demo = false; state.file = file; state.playing = false;
-    const scale = Math.min(1, 1920 / Math.max(video.videoWidth, video.videoHeight), 1080 / Math.min(video.videoWidth, video.videoHeight));
-    canvas.width = Math.max(2, Math.round(video.videoWidth * scale / 2) * 2); canvas.height = Math.max(2, Math.round(video.videoHeight * scale / 2) * 2);
-    $('uploadPanel').hidden = true; $('editPanel').hidden = false; $('demoCaption').hidden = true; $('stageTag').hidden = true; $('stageNote').hidden = true;
-    $('previewTitle').textContent = 'YOUR SWING'; $('clipMeta').textContent = `${video.videoWidth} × ${video.videoHeight} · ${format(video.duration)}`;
-    $('timeline').max = video.duration; $('duration').textContent = format(video.duration); $('replay').textContent = 'Replay swing ↻'; $('exportNote').textContent = 'Original audio · Up to 1080p · No watermark';
+    await openSwing(file, signal);
+    loaded = true;
     updateStatus('Looking for a continuous ball flight…');
     await analyze(signal);
-    // Land near the end so the held trace includes the extrapolated finish.
     const reviewAt = state.points.length ? Math.max(0, video.duration - .001) : 0;
     await seek(video, reviewAt, signal);
   } catch (error) {
@@ -108,6 +125,87 @@ async function upload(file) {
     if (error.name !== 'AbortError') toast(error.message);
     if (loaded) updateStatus(error.name === 'AbortError' ? 'Detection cancelled. You can place the trace manually.' : 'Detection unavailable. Add points with “Adjust the flight”.', true);
   } finally { setBusy(false); state.controller = null; }
+}
+function downloadBlob(blob, baseName) {
+  const extension = blob.type.startsWith('video/mp4') ? 'mp4' : 'webm';
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${baseName.replace(/\.[^.]+$/, '')}-flightline.${extension}`;
+  link.textContent = `Download ${extension.toUpperCase()} again ↓`;
+  $('exportNote').replaceChildren(link);
+  link.click();
+  if (state.downloadURL) URL.revokeObjectURL(state.downloadURL);
+  state.downloadURL = url;
+  return extension;
+}
+async function processBulk(files) {
+  if (state.busy) return;
+  const queue = files.slice(0, BULK_LIMIT);
+  if (!queue.length) return toast('Choose video files: MP4, MOV, or WebM.');
+  if (files.length > BULK_LIMIT) toast(`Bulk mode handles up to ${BULK_LIMIT} clips at a time. Processing the first ${BULK_LIMIT}.`);
+  state.bulk = true;
+  state.controller = new AbortController();
+  const signal = state.controller.signal;
+  const summary = { ok: 0, skipped: 0, failed: 0, names: [] };
+  let lastLoaded = false;
+  try {
+    for (let i = 0; i < queue.length; i++) {
+      if (signal.aborted) throw abortError();
+      const file = queue[i];
+      const label = `${i + 1} of ${queue.length}`;
+      try {
+        await openSwing(file, signal, {
+          title: `Bulk ${label} · Opening…`,
+          detail: `${file.name} · Keep this tab visible.`
+        });
+        lastLoaded = true;
+        await analyze(signal, {
+          title: `Bulk ${label} · Finding flight…`,
+          detail: `${file.name} · Keep this tab visible.`
+        });
+        if (state.points.length < 2) {
+          summary.skipped++;
+          summary.names.push(`${file.name} (no reliable flight)`);
+          continue;
+        }
+        setBusy(true, `Bulk ${label} · Exporting…`, `${file.name} · Keep this tab visible. Export runs at playback speed.`);
+        const blob = await recordExport(signal);
+        downloadBlob(blob, file.name);
+        summary.ok++;
+        // Give the browser a beat between successive downloads.
+        await new Promise(resolve => setTimeout(resolve, 450));
+      } catch (error) {
+        if (error.name === 'AbortError') throw error;
+        summary.failed++;
+        summary.names.push(`${file.name} (${error.message || 'failed'})`);
+      }
+    }
+    if (lastLoaded && state.points.length) {
+      const reviewAt = Math.max(0, video.duration - .001);
+      await seek(video, reviewAt, signal).catch(() => {});
+      updateStatus(`Bulk finished · ${summary.ok} exported` + (summary.skipped || summary.failed ? ` · ${summary.skipped + summary.failed} need attention` : '') + '.', summary.ok === 0);
+    } else if (!lastLoaded) resetDemo();
+    const bits = [`${summary.ok} traced`];
+    if (summary.skipped) bits.push(`${summary.skipped} skipped`);
+    if (summary.failed) bits.push(`${summary.failed} failed`);
+    toast(`Bulk done: ${bits.join(', ')}.${summary.names.length ? ' Check the status note for details.' : ''}`);
+    if (summary.names.length) updateStatus(`Bulk notes: ${summary.names.slice(0, 4).join(' · ')}${summary.names.length > 4 ? '…' : ''}`, true);
+  } catch (error) {
+    if (error.name === 'AbortError') toast('Bulk cancelled. Keep this tab visible to finish a batch.');
+    else toast(error.message || 'Bulk processing failed.');
+    if (!lastLoaded) resetDemo();
+  } finally {
+    state.bulk = false;
+    setBusy(false);
+    state.controller = null;
+  }
+}
+function handleIncomingFiles(fileList) {
+  const videos = collectVideoFiles(fileList);
+  if (!videos.length) return toast('Choose a video file: MP4, MOV, or WebM.');
+  if (videos.length === 1) return upload(videos[0]);
+  return processBulk(videos);
 }
 function frameSignature(pixels) {
   let sum = 0;
@@ -194,12 +292,12 @@ async function captureAnalysisFrames(scan, scanCtx, fps, signal) {
   }
   return captured;
 }
-async function analyze(signal) {
-  setBusy(true, 'Finding your flight…', 'Scanning for the ball’s motion. This may take a minute.');
+async function analyze(signal, labels = {}) {
+  setBusy(true, labels.title || 'Finding your flight…', labels.detail || 'Scanning for the ball’s motion. This may take a minute.');
   const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
   const scan = document.createElement('canvas'); scan.width = Math.round(video.videoWidth * scale); scan.height = Math.round(video.videoHeight * scale);
   const scanCtx = scan.getContext('2d', { willReadFrequently: true });
-  const worker = new Worker(new URL('./worker.js?v=37', import.meta.url), { type: 'module' });
+  const worker = new Worker(new URL('./worker.js?v=41', import.meta.url), { type: 'module' });
   try {
     const params = new URLSearchParams(location.search), from = Math.max(0, Number(params.get('diagnosticFrom')) || 0);
     const diagnostics = params.has('diagnostics') ? { from, to: from + 1 } : null;
@@ -222,7 +320,10 @@ async function analyze(signal) {
       const copy = new Uint8ClampedArray(pixels);
       await workerCall(worker, { type: 'frame', buffer: copy.buffer, time: t }, signal, [copy.buffer]);
       $('progress').value = 55 + (i + 1) / frames * 45;
-      if (i % 15 === 0) $('busyText').textContent = `Analyzing frame ${i + 1} of ${frames} · ${Math.round((i + 1) / frames * 100)}%`;
+      if (i % 15 === 0) {
+        const prefix = state.bulk ? `${labels.detail?.split(' · ')[0] || 'Bulk'} · ` : '';
+        $('busyText').textContent = `${prefix}Analyzing frame ${i + 1} of ${frames} · ${Math.round((i + 1) / frames * 100)}%`;
+      }
     }
     const result = await workerCall(worker, { type: 'finish' }, signal);
     const { frames: diagnosticFrames, ...diagnosticSummary } = result;
@@ -233,11 +334,9 @@ async function analyze(signal) {
     // Native-resolution refinement was locking onto clothing after the ball
     // faded. Keep the observed motion track only until that path is reliable.
     if (state.points.length) {
-      updateStatus(`Possible flight found in ${state.points.length} frames.`, true);
-      $('previewHint').textContent = `Motion tracking beta · ${state.points.length} observed points · build 37`;
+      updateStatus(`Possible flight found in ${state.points.length} frames · ${video.videoWidth}×${video.videoHeight}`, true);
     } else {
       updateStatus('No reliable flight found. Use “Adjust the flight” to place the ball at a few moments.', true);
-      $('previewHint').textContent = 'The ball may be too small or blend into the background.';
     }
   } finally { worker.terminate(); }
 }
@@ -253,13 +352,29 @@ function drawTrace(time) {
   if (path.length < 2) return;
   const offset = state.demo ? { x: 0, y: 0 } : cameraAt(state.camera, time);
   const xy = p => [(p.x + offset.x) * canvas.width, (p.y + offset.y) * canvas.height];
-  ctx.save(); ctx.strokeStyle = state.color; ctx.lineWidth = TRACE_WIDTH * Math.max(canvas.width, canvas.height) / 1280; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  ctx.shadowColor = state.color; ctx.shadowBlur = state.glow ? ctx.lineWidth * 2.4 : 0;
+  const scale = Math.max(canvas.width, canvas.height) / 1280;
+  const width = TRACE_WIDTH * scale;
+  ctx.save();
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   ctx.beginPath(); ctx.moveTo(...xy(path[0]));
   for (let i = 1; i < path.length; i++) ctx.lineTo(...xy(path[i]));
+  // Soft under-stroke + fat core so tiny lateral jitter disappears into the ribbon.
+  if (state.glow) {
+    ctx.strokeStyle = state.color;
+    ctx.shadowColor = state.color;
+    ctx.shadowBlur = width * 1.8;
+    ctx.globalAlpha = .45;
+    ctx.lineWidth = width * 1.55;
+    ctx.stroke();
+  }
+  ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  ctx.strokeStyle = state.color;
+  ctx.lineWidth = width;
   ctx.stroke();
   const [x, y] = xy(path.at(-1));
-  ctx.fillStyle = '#ffffec'; ctx.beginPath(); ctx.arc(x, y, ctx.lineWidth * .7, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+  ctx.fillStyle = '#ffffec';
+  ctx.beginPath(); ctx.arc(x, y, width * .55, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
 }
 function draw() {
   ctx.fillStyle = '#152b21'; ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -294,15 +409,14 @@ async function togglePlay() {
   if (video.paused) { if (video.ended) await seek(video, 0); try { await audioContext?.resume(); await video.play(); } catch { toast('Playback could not start. Try pressing play again.'); } }
   else video.pause();
 }
-async function exportVideo() {
-  if (state.busy || state.demo || state.points.length < 2) return;
-  if (!canvas.captureStream || !window.MediaRecorder) return toast('Video export is unavailable in this browser. Try a current desktop Chrome, Edge, or Safari.');
+async function recordExport(signal) {
+  if (!canvas.captureStream || !window.MediaRecorder) throw new Error('Video export is unavailable in this browser. Try a current desktop Chrome, Edge, or Safari.');
   const mimeType = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(type => MediaRecorder.isTypeSupported(type));
-  if (!mimeType) return toast('No compatible video encoder is available in this browser.');
-  video.pause(); const oldTime = video.currentTime, oldTrace = state.showTrace;
-  setEditing(false); state.showTrace = true; state.controller = new AbortController(); const signal = state.controller.signal;
+  if (!mimeType) throw new Error('No compatible video encoder is available in this browser.');
+  video.pause();
+  const oldTrace = state.showTrace;
+  setEditing(false); state.showTrace = true;
   let stream, recorder, destination, wakeLock;
-  setBusy(true, 'Finishing your replay…', 'Keep this tab visible. Export runs at the video’s playback speed.');
   const visibility = () => { if (document.hidden) state.controller?.abort(); };
   document.addEventListener('visibilitychange', visibility);
   try {
@@ -333,31 +447,40 @@ async function exportVideo() {
       recorder.start(250);
       video.play().catch(error => { cleanup(); stop(); reject(error); });
     });
-    // Observe errors immediately while optional screen wake lock is acquired.
     recorded.catch(() => {});
     try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {}
     const blob = await recorded;
     if (!blob.size) throw new Error('The export was empty. Please try again.');
-    const url = URL.createObjectURL(blob), extension = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
-    const link = document.createElement('a'); link.href = url; link.download = `${state.file.name.replace(/\.[^.]+$/, '')}-flightline.${extension}`; link.textContent = `Download ${extension.toUpperCase()} again ↓`;
-    $('exportNote').replaceChildren(link); link.click();
-    // Keep the latest download available while the page is open.
-    if (state.downloadURL) URL.revokeObjectURL(state.downloadURL); state.downloadURL = url;
-    toast('Your traced video is ready. No watermark, all yours.');
-  } catch (error) {
-    if (error.name === 'AbortError') toast('Export cancelled. Keep this tab visible to finish your video.');
-    else toast(error.message || 'Export failed. Try a shorter clip.');
+    return blob;
   } finally {
     video.pause(); if (recorder && recorder.state !== 'inactive') recorder.stop();
     stream?.getTracks().forEach(track => track.stop()); if (destination) audioSource.disconnect(destination);
     if (monitor) monitor.gain.value = 1; await wakeLock?.release();
     document.removeEventListener('visibilitychange', visibility);
-    state.showTrace = oldTrace; state.controller = null; setBusy(false);
+    state.showTrace = oldTrace;
+  }
+}
+async function exportVideo() {
+  if (state.busy || state.demo || state.points.length < 2) return;
+  video.pause();
+  const oldTime = video.currentTime;
+  state.controller = new AbortController();
+  const signal = state.controller.signal;
+  setBusy(true, 'Finishing your replay…', 'Keep this tab visible. Export runs at the video’s playback speed.');
+  try {
+    const blob = await recordExport(signal);
+    downloadBlob(blob, state.file.name);
+    toast('Your traced video is ready. No watermark, all yours.');
+  } catch (error) {
+    if (error.name === 'AbortError') toast('Export cancelled. Keep this tab visible to finish your video.');
+    else toast(error.message || 'Export failed. Try a shorter clip.');
+  } finally {
+    state.controller = null; setBusy(false);
     await seek(video, oldTime).catch(() => {});
   }
 }
 
-$('fileInput').addEventListener('change', event => { upload(event.target.files[0]); event.target.value = ''; });
+$('fileInput').addEventListener('change', event => { handleIncomingFiles(event.target.files); event.target.value = ''; });
 async function pickNewVideo() {
   if (isPreviewFullscreen()) {
     try {
@@ -367,13 +490,12 @@ async function pickNewVideo() {
   }
   $('fileInput').click();
 }
-$('dropzone').onclick = $('newVideo').onclick = $('focusNewVideo').onclick = () => pickNewVideo();
+$('dropzone').onclick = $('newVideo').onclick = () => pickNewVideo();
 for (const type of ['dragenter', 'dragover']) $('dropzone').addEventListener(type, event => { event.preventDefault(); $('dropzone').classList.add('dragover'); });
 for (const type of ['dragleave', 'drop']) $('dropzone').addEventListener(type, event => { event.preventDefault(); $('dropzone').classList.remove('dragover'); });
-$('dropzone').addEventListener('drop', event => upload(event.dataTransfer.files[0]));
+$('dropzone').addEventListener('drop', event => handleIncomingFiles(event.dataTransfer.files));
 $('play').onclick = togglePlay;
 $('timeline').addEventListener('input', event => { if (state.busy) return; if (state.demo) { state.time = +event.target.value; state.playing = false; } else { video.pause(); video.currentTime = +event.target.value; } });
-$('replay').onclick = async () => { if (state.demo) { state.time = 0; state.playing = true; } else { video.pause(); await seek(video, 0).catch(error => toast(error.message)); await togglePlay(); } };
 $('toggleTrace').onclick = () => { state.showTrace = !state.showTrace; $('toggleTrace').classList.toggle('active', state.showTrace); $('toggleTrace').setAttribute('aria-pressed', String(state.showTrace)); };
 function setTracerColor(color) {
   state.color = color;
@@ -386,18 +508,14 @@ function setTracerColor(color) {
 function setTracerGlow(on) {
   state.glow = on;
   $('glow').checked = on;
-  $('focusGlow').checked = on;
 }
 function setTracerHold(on) {
   state.hold = on;
   $('hold').checked = on;
-  $('focusHold').checked = on;
 }
 document.querySelectorAll('.swatch').forEach(button => button.onclick = () => setTracerColor(button.dataset.color));
 $('glow').onchange = event => setTracerGlow(event.target.checked);
-$('focusGlow').onchange = event => setTracerGlow(event.target.checked);
 $('hold').onchange = event => setTracerHold(event.target.checked);
-$('focusHold').onchange = event => setTracerHold(event.target.checked);
 $('editTrace').onclick = () => setEditing(true); $('doneEditing').onclick = () => setEditing(false);
 for (const [id, delta] of [['backFrame', -1 / 30], ['forwardFrame', 1 / 30]]) $(id).onclick = () => { video.pause(); seek(video, video.currentTime + delta).catch(error => toast(error.message)); };
 function manualStatus() { updateStatus(state.points.length < 2 ? 'Place at least two points at different times to make a trace.' : `${state.points.length} trace points · Preview your edits, then export.`, state.points.length < 2); }
@@ -415,18 +533,10 @@ canvas.addEventListener('click', async event => {
   state.points.push({ t: video.currentTime, x: x - offset.x, y: y - offset.y }); state.points.sort((a, b) => a.t - b.t);
   manualStatus(); await seek(video, video.currentTime + .1).catch(error => toast(error.message));
 });
-$('export').onclick = $('focusExport').onclick = exportVideo; $('cancel').onclick = () => state.controller?.abort();
+$('export').onclick = exportVideo; $('cancel').onclick = () => state.controller?.abort();
 $('help').onclick = () => $('helpDialog').showModal(); $('closeHelp').onclick = $('gotIt').onclick = () => $('helpDialog').close();
 $('helpDialog').addEventListener('click', event => { if (event.target === $('helpDialog')) { const r = $('helpDialog').getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) $('helpDialog').close(); } });
 
-const studio = document.querySelector('.studio');
-function setPanelCollapsed(collapsed) {
-  studio.classList.toggle('panel-collapsed', collapsed);
-  $('togglePanel').setAttribute('aria-pressed', String(collapsed));
-  $('togglePanel').setAttribute('aria-label', collapsed ? 'Show controls' : 'Hide controls');
-  $('togglePanel').title = collapsed ? 'Show controls' : 'Hide controls';
-  try { localStorage.setItem('flightline-panel-collapsed', collapsed ? '1' : '0'); } catch { /* ignore */ }
-}
 function isPreviewFullscreen() {
   return document.fullscreenElement === $('previewColumn') || document.webkitFullscreenElement === $('previewColumn');
 }
@@ -452,11 +562,9 @@ async function toggleFullscreen() {
     toast('Full screen could not start. Try again from this tab.');
   }
 }
-$('togglePanel').onclick = () => setPanelCollapsed(!studio.classList.contains('panel-collapsed'));
-$('fullscreen').onclick = $('exitFullscreen').onclick = () => toggleFullscreen();
+$('fullscreen').onclick = () => toggleFullscreen();
 document.addEventListener('fullscreenchange', syncFullscreenUi);
 document.addEventListener('webkitfullscreenchange', syncFullscreenUi);
-try { if (localStorage.getItem('flightline-panel-collapsed') === '1') setPanelCollapsed(true); } catch { /* ignore */ }
 
 document.addEventListener('keydown', event => {
   if (event.code === 'Space' && !['INPUT','BUTTON','A','TEXTAREA'].includes(event.target.tagName) && !$('helpDialog').open) {
@@ -464,9 +572,6 @@ document.addEventListener('keydown', event => {
   }
   if ((event.key === 'f' || event.key === 'F') && !['INPUT','TEXTAREA'].includes(event.target.tagName) && !$('helpDialog').open) {
     event.preventDefault(); toggleFullscreen();
-  }
-  if ((event.key === '\\' || event.key === ']') && !['INPUT','TEXTAREA'].includes(event.target.tagName) && !$('helpDialog').open && !isPreviewFullscreen()) {
-    event.preventDefault(); setPanelCollapsed(!studio.classList.contains('panel-collapsed'));
   }
 });
 if (matchMedia('(prefers-reduced-motion: reduce)').matches) { state.playing = false; state.time = 5.5; }

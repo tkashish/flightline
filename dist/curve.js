@@ -5,17 +5,18 @@ function polishFlight(points) {
   const cleaned = denoiseFlight(points);
   if (cleaned.length < 5) return cleaned;
   const out = cleaned.map(p => ({ ...p }));
-  // One gentle neighbor blend on interior points damps pixel jitter without
-  // inventing a landing or flattening the launch→apex arc.
-  const next = out.map(p => ({ ...p }));
-  for (let i = 1; i < out.length - 1; i++) {
-    const a = out[i - 1], b = out[i], c = out[i + 1];
-    const wa = 1 / Math.max(.02, b.t - a.t), wc = 1 / Math.max(.02, c.t - b.t), wb = 2.4;
-    const w = wa + wb + wc;
-    next[i].x = (a.x * wa + b.x * wb + c.x * wc) / w;
-    next[i].y = (a.y * wa + b.y * wb + c.y * wc) / w;
+  // Two neighbor blends calm pixel chatter so a fat stroke can hide the rest.
+  for (let pass = 0; pass < 2; pass++) {
+    const next = out.map(p => ({ ...p }));
+    for (let i = 1; i < out.length - 1; i++) {
+      const a = out[i - 1], b = out[i], c = out[i + 1];
+      const wa = 1 / Math.max(.02, b.t - a.t), wc = 1 / Math.max(.02, c.t - b.t), wb = 1.6;
+      const w = wa + wb + wc;
+      next[i].x = (a.x * wa + b.x * wb + c.x * wc) / w;
+      next[i].y = (a.y * wa + b.y * wb + c.y * wc) / w;
+    }
+    for (let i = 1; i < out.length - 1; i++) { out[i].x = next[i].x; out[i].y = next[i].y; }
   }
-  for (let i = 1; i < out.length - 1; i++) { out[i].x = next[i].x; out[i].y = next[i].y; }
   return out;
 }
 
@@ -34,7 +35,7 @@ export function smoothFlight(points, fps = 120) {
       const before = p.t - source[i - 1].t, after = source[i + 1].t - p.t;
       const w1 = 2 * after + before, w2 = after + 2 * before;
       // Extra damping on mid tangents reduces residual zigzag after polish.
-      return ((w1 + w2) / (w1 / a + w2 / b)) * .82;
+      return ((w1 + w2) / (w1 / a + w2 / b)) * .68;
     });
   };
   const tx = tangents('x'), ty = tangents('y'), curve = [source[0]];

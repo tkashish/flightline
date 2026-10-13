@@ -2,51 +2,94 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#183e30"><meta name="description" content="Your personal golf shot studio. Upload a swing, trace the flight, and export your video. Processed privately in your browser.">
-  <title>Flightline — Your shot, beautifully traced.</title>
+  <meta name="theme-color" content="#183e30"><meta name="description" content="Upload a swing, trace the flight, and export your video. Processed privately in your browser.">
+  <title>Flightline</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23183e30'/%3E%3Cpath d='M15 48Q27 0 48 20' stroke='%23d1ef8c' stroke-width='5' fill='none'/%3E%3Ccircle cx='48' cy='20' r='5' fill='white'/%3E%3C/svg%3E">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-  <link rel="stylesheet" href="styles.css?v=37">
+  <link rel="stylesheet" href="styles.css?v=41">
 </head>
-<body>
-  <header class="header"><a class="brand" href="./" aria-label="Flightline home"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 27Q12-2 26 9"/><circle cx="26" cy="9" r="3"/></svg>flightline<span class="brand-dot">.</span></a><span class="studio-label">THE SHOT STUDIO</span><button class="text-button" id="help">A better first trace <span>↗</span></button></header>
-  <main>
-    <section class="intro"><div><div class="eyebrow"><span></span> FROM THE TEE TO THE TIMELINE</div><h1>Give your shot a little <em>follow-through.</em></h1><p>Upload your swing. Trace the flight. Keep the moment.</p></div><div class="private-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6z"/><path d="m8 12 3 3 5-6"/></svg><span>Your video stays<br><strong>on your device.</strong></span></div></section>
+<body class="app-shell">
+  <main class="app-main">
     <section class="studio" aria-label="Golf tracer editor">
       <div class="preview-column" id="previewColumn">
-        <div class="preview-top"><div class="small-label"><span class="live-dot"></span><span id="previewTitle">A LITTLE FLIGHTLINE MAGIC</span></div><div class="preview-top-meta"><span id="clipMeta">INTERACTIVE DEMO</span><button class="icon-button layout-toggle" id="togglePanel" type="button" aria-label="Hide controls" aria-pressed="false" title="Hide controls"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 6 8 12l6 6"/></svg></button><button class="icon-button layout-toggle" id="fullscreen" type="button" aria-label="Full screen" aria-pressed="false" title="Full screen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button></div></div>
-        <div class="stage" id="stage"><canvas id="preview" width="1280" height="720" aria-label="Video and animated ball tracer preview"></canvas><video id="video" playsinline preload="auto" hidden></video><div class="stage-tag" id="stageTag"><span></span> THE PERFECT LINE</div><div class="demo-caption" id="demoCaption"><span>MEET YOUR NEW FINISHING TOUCH</span><h2>Let the shot<br>speak for itself.</h2></div><div class="stage-note" id="stageNote">Illustrated demo · not a tracked video</div><div class="busy-overlay" id="busyOverlay" hidden><div class="spinner"></div><strong id="busyTitle">Finding your flight…</strong><p id="busyText">Looking for the ball, frame by frame.</p><progress id="progress" max="100" value="0"></progress><button class="light-button" id="cancel">Cancel</button></div></div>
-        <div class="transport"><button class="icon-button" id="play" aria-label="Play preview">▶</button><span class="time" id="time">0:00</span><input id="timeline" type="range" min="0" max="8" step="0.01" value="0" aria-label="Video timeline"><span class="time" id="duration">0:08</span><button class="icon-button trace-toggle active" id="toggleTrace" aria-label="Toggle tracer" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M3 20Q10-6 21 7"/><circle cx="21" cy="7" r="2"/></svg></button><button class="icon-button layout-toggle fullscreen-exit" id="exitFullscreen" type="button" aria-label="Exit full screen" title="Exit full screen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></svg></button></div>
-        <div class="preview-footer"><span id="previewHint">A great shot. An even better replay.</span><button class="text-button" id="replay">Replay demo ↻</button></div>
-        <aside class="focus-style" id="focusStyle" aria-label="Tracer style">
-          <div class="focus-style-title">Your shot, your style</div>
-          <div class="focus-style-label">Tracer color</div>
-          <div class="swatches focus-swatches">
-            <button class="swatch selected" data-color="#f5fa9b" style="--swatch:#e5ed88" aria-label="Lime tracer" aria-pressed="true"></button>
-            <button class="swatch" data-color="#ff674e" style="--swatch:#ff674e" aria-label="Coral tracer" aria-pressed="false"></button>
-            <button class="swatch" data-color="#ffffff" style="--swatch:#fff" aria-label="White tracer" aria-pressed="false"></button>
-            <button class="swatch" data-color="#59ccff" style="--swatch:#59ccff" aria-label="Blue tracer" aria-pressed="false"></button>
-            <button class="swatch" data-color="#c49bff" style="--swatch:#c49bff" aria-label="Lilac tracer" aria-pressed="false"></button>
+        <div class="stage" id="stage">
+          <canvas id="preview" width="1280" height="720" aria-label="Video and ball tracer preview"></canvas>
+          <video id="video" playsinline preload="auto" hidden></video>
+          <div class="busy-overlay" id="busyOverlay" hidden>
+            <div class="spinner"></div>
+            <strong id="busyTitle">Finding your flight…</strong>
+            <p id="busyText">Looking for the ball, frame by frame.</p>
+            <progress id="progress" max="100" value="0"></progress>
+            <button class="light-button" id="cancel">Cancel</button>
           </div>
-          <label class="check-label"><input type="checkbox" id="focusGlow" checked><span>Soft glow</span></label>
-          <label class="check-label"><input type="checkbox" id="focusHold" checked><span>Keep the full flight visible</span></label>
-          <div class="focus-style-actions">
-            <button class="primary-button" id="focusExport" type="button" disabled>Export video <span>↓</span></button>
-            <p class="fine-print export-note">Original audio · Up to 1080p · No watermark</p>
-            <button class="text-button full" id="focusNewVideo" type="button">Upload another swing</button>
-          </div>
-        </aside>
+        </div>
+        <div class="transport">
+          <button class="icon-button" id="play" aria-label="Play preview">▶</button>
+          <span class="time" id="time">0:00</span>
+          <input id="timeline" type="range" min="0" max="8" step="0.01" value="0" aria-label="Video timeline">
+          <span class="time" id="duration">0:08</span>
+          <button class="icon-button trace-toggle active" id="toggleTrace" aria-label="Toggle tracer" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M3 20Q10-6 21 7"/><circle cx="21" cy="7" r="2"/></svg></button>
+          <button class="icon-button layout-toggle" id="fullscreen" type="button" aria-label="Full screen" title="Full screen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        </div>
       </div>
       <aside class="panel" id="sidePanel">
-        <div id="uploadPanel"><div class="step-tag">01 / YOUR SWING</div><h2>Start with a good shot.</h2><p class="muted">We’ll help you make it a great replay.</p><button id="dropzone" class="dropzone"><span class="upload-icon"><svg viewBox="0 0 32 32"><path d="M16 21V5m-6 6 6-6 6 6M6 21v5a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5"/></svg></span><strong>Drop your swing here</strong><span>or <u>browse files</u></span><small>MP4, MOV, WEBM · Up to 250 MB / 30 sec</small></button><div class="tips"><span class="tip-symbol">↗</span><p>For a cleaner trace, keep the camera steady and the ball in frame.</p></div><div class="panel-rule"></div><div class="beta-note"><span>BETA</span> Automatic motion tracking</div><p class="fine-print">Works with visible, contrasting balls from either angle. Difficult clips may need a few manual points.</p></div>
-        <div id="editPanel" hidden><div class="step-tag">02 / MAKE IT YOURS</div><h2>Your shot, your style.</h2><div class="result-status" id="resultStatus" role="status"></div><fieldset id="styleControls"><legend>TRACER COLOR</legend><div class="swatches"><button class="swatch selected" data-color="#f5fa9b" style="--swatch:#e5ed88" aria-label="Lime tracer" aria-pressed="true"></button><button class="swatch" data-color="#ff674e" style="--swatch:#ff674e" aria-label="Coral tracer" aria-pressed="false"></button><button class="swatch" data-color="#ffffff" style="--swatch:#fff" aria-label="White tracer" aria-pressed="false"></button><button class="swatch" data-color="#59ccff" style="--swatch:#59ccff" aria-label="Blue tracer" aria-pressed="false"></button><button class="swatch" data-color="#c49bff" style="--swatch:#c49bff" aria-label="Lilac tracer" aria-pressed="false"></button></div><label class="check-label"><input type="checkbox" id="glow" checked><span>Soft glow</span></label><label class="check-label"><input type="checkbox" id="hold" checked><span>Keep the full flight visible</span></label></fieldset><div class="panel-rule"></div><button class="outline-button" id="editTrace">Adjust the flight <span>⌁</span></button><div id="manualTools" hidden><p class="fine-print">Scrub to the ball, then click it in the video. Add at least two points at different times. Each click advances 0.1 seconds.</p><div class="button-row"><button id="backFrame" aria-label="Back one frame">← Frame</button><button id="forwardFrame" aria-label="Forward one frame">Frame →</button></div><div class="button-row"><button id="undo">Undo point</button><button id="clearTrace">Clear trace</button></div><button class="outline-button" id="doneEditing">Done adjusting ✓</button></div><button class="primary-button" id="export" disabled>Export video <span>↓</span></button><p class="fine-print export-note" id="exportNote">Original audio · Up to 1080p · No watermark</p><button class="text-button full" id="newVideo">Upload another swing</button></div>
-        <input id="fileInput" type="file" accept="video/*,.mp4,.mov,.webm" hidden>
+        <div id="uploadPanel">
+          <h2>Upload a swing</h2>
+          <p class="muted">Trace the flight. Export the replay.</p>
+          <button id="dropzone" class="dropzone">
+            <span class="upload-icon"><svg viewBox="0 0 32 32"><path d="M16 21V5m-6 6 6-6 6 6M6 21v5a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5"/></svg></span>
+            <strong>Drop video here</strong>
+            <span>or <u>browse files</u></span>
+            <small>MP4, MOV, WEBM · Up to 250 MB / 30 sec · Multiple OK</small>
+          </button>
+          <p class="fine-print">Video stays on this device. Keep the tab visible while exporting.</p>
+          <button class="text-button" id="help" type="button">Tips for a better trace <span>↗</span></button>
+        </div>
+        <div id="editPanel" hidden>
+          <h2>Edit &amp; export</h2>
+          <div class="result-status" id="resultStatus" role="status"></div>
+          <fieldset id="styleControls">
+            <legend>TRACER COLOR</legend>
+            <div class="swatches">
+              <button class="swatch selected" data-color="#f5fa9b" style="--swatch:#e5ed88" aria-label="Lime tracer" aria-pressed="true"></button>
+              <button class="swatch" data-color="#ff674e" style="--swatch:#ff674e" aria-label="Coral tracer" aria-pressed="false"></button>
+              <button class="swatch" data-color="#ffffff" style="--swatch:#fff" aria-label="White tracer" aria-pressed="false"></button>
+              <button class="swatch" data-color="#59ccff" style="--swatch:#59ccff" aria-label="Blue tracer" aria-pressed="false"></button>
+              <button class="swatch" data-color="#c49bff" style="--swatch:#c49bff" aria-label="Lilac tracer" aria-pressed="false"></button>
+            </div>
+            <label class="check-label"><input type="checkbox" id="glow" checked><span>Soft glow</span></label>
+            <label class="check-label"><input type="checkbox" id="hold" checked><span>Keep the full flight visible</span></label>
+          </fieldset>
+          <div class="panel-rule"></div>
+          <button class="outline-button" id="editTrace">Adjust the flight <span>⌁</span></button>
+          <div id="manualTools" hidden>
+            <p class="fine-print">Scrub to the ball, then click it. Add at least two points at different times.</p>
+            <div class="button-row"><button id="backFrame" aria-label="Back one frame">← Frame</button><button id="forwardFrame" aria-label="Forward one frame">Frame →</button></div>
+            <div class="button-row"><button id="undo">Undo point</button><button id="clearTrace">Clear trace</button></div>
+            <button class="outline-button" id="doneEditing">Done adjusting ✓</button>
+          </div>
+          <button class="primary-button" id="export" disabled>Save video <span>↓</span></button>
+          <p class="fine-print export-note" id="exportNote">Original audio · Up to 1080p · No watermark</p>
+          <button class="text-button full" id="newVideo">Upload another swing</button>
+        </div>
+        <input id="fileInput" type="file" accept="video/*,.mp4,.mov,.webm" multiple hidden>
       </aside>
     </section>
-    <section class="how-it-works"><article><span class="feature-number">01</span><div><h3>Bring your swing.</h3><p>From the range, the course, or your camera roll.</p></div></article><article><span class="feature-number">02</span><div><h3>Follow the flight.</h3><p>Automatic detection, with a little help when needed.</p></div></article><article><span class="feature-number">03</span><div><h3>Make the group chat.</h3><p>Download your traced video. Let them see it fly.</p></div></article></section>
   </main>
-  <footer><span class="footer-brand">Made for the love of the game.</span><span>NO ACCOUNT. NO WATERMARK. JUST YOUR SHOT.</span></footer>
   <div id="toast" role="status" hidden></div>
-  <dialog id="helpDialog"><button class="dialog-close icon-button" id="closeHelp" aria-label="Close tips">✕</button><div class="eyebrow">A BETTER FIRST TRACE</div><h2>A few things go a long way.</h2><ol><li><strong>Keep it steady.</strong> A fixed camera works best. Fast pans and zooms make detection harder.</li><li><strong>Keep it short.</strong> Include at least half a second before impact, with the stationary ball visible. One swing, up to 30 seconds.</li><li><strong>Let the ball stand out.</strong> Good light and a contrasting background help. Either camera angle is supported.</li><li><strong>Check the result.</strong> This beta uses motion and appearance, not a golf-trained neural model. Use “Adjust the flight” when needed. It won’t invent an unseen landing.</li><li><strong>Export in the foreground.</strong> Keep this tab visible until the download is ready. Export takes roughly the clip’s duration. Format depends on browser support.</li></ol><button class="primary-button" id="gotIt">Got it. Let’s trace.</button></dialog>
-  <script type="module" src="app.js?v=37"></script>
-</body></html>
+  <dialog id="helpDialog">
+    <button class="dialog-close icon-button" id="closeHelp" aria-label="Close tips">✕</button>
+    <div class="eyebrow">TIPS</div>
+    <h2>A better first trace</h2>
+    <ol>
+      <li><strong>Keep it steady.</strong> A fixed camera works best.</li>
+      <li><strong>Keep it short.</strong> Half a second before impact, ball visible. Up to 30 seconds.</li>
+      <li><strong>Let the ball stand out.</strong> Good light and contrast help.</li>
+      <li><strong>Adjust if needed.</strong> Use “Adjust the flight” for tough clips.</li>
+      <li><strong>Keep this tab visible</strong> while exporting.</li>
+    </ol>
+    <button class="primary-button" id="gotIt">Got it</button>
+  </dialog>
+  <script type="module" src="app.js?v=41"></script>
+</body>
+</html>

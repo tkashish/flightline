@@ -19,7 +19,7 @@ test('a smooth curve keeps endpoints and bounds while calming mid-flight wobble'
   // Interior samples stay near the flight corridor, not glued to pixel chatter.
   for (const p of points.slice(1, -1)) {
     const sample = curve.reduce((best, c) => Math.abs(c.t - p.t) < Math.abs(best.t - p.t) ? c : best);
-    assert.ok(Math.hypot(sample.x - p.x, sample.y - p.y) < .15, `midpoint drifted too far at t=${p.t}`);
+    assert.ok(Math.hypot(sample.x - p.x, sample.y - p.y) < .2, `midpoint drifted too far at t=${p.t}`);
   }
   assert.ok(curve.every(p => p.x >= .18 && p.x <= .52 && p.y >= .38 && p.y <= .82));
   assert.ok(curve.slice(1).every((p, i) => p.t > curve[i].t));
