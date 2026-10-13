@@ -1,7 +1,7 @@
-import { cameraAt, visiblePath } from './tracker.js?v=47';
-import { smoothFlight } from './curve.js?v=47';
-import { plannedSampleTimes, isNearDuplicateTime, suggestRingCapacity, rgbaBytes } from './frame-source.js?v=47';
-import { normalizeTrackReport } from './track-status.js?v=47';
+import { cameraAt, visiblePath } from './tracker.js?v=48';
+import { smoothFlight } from './curve.js?v=48';
+import { plannedSampleTimes, isNearDuplicateTime, suggestRingCapacity, rgbaBytes } from './frame-source.js?v=48';
+import { normalizeTrackReport } from './track-status.js?v=48';
 
 const $ = id => document.getElementById(id);
 const canvas = $('preview'), ctx = canvas.getContext('2d'), video = $('video');
@@ -24,7 +24,14 @@ function toast(message) { clearTimeout(toastTimer); $('toast').textContent = mes
 function setBusy(busy, title = '', detail = '') {
   state.busy = busy; $('busyOverlay').hidden = !busy;
   $('busyTitle').textContent = title; $('busyText').textContent = detail; $('progress').value = 0;
-  for (const id of ['play', 'timeline', 'editTrace', 'newVideo', 'dropzone', 'styleControls', 'toggleTrace', 'backFrame', 'forwardFrame', 'undo', 'clearTrace', 'doneEditing']) $(id).disabled = busy;
+  // Keep dropzone / newVideo enabled so a stuck analyze cannot trap the file picker.
+  for (const id of ['play', 'timeline', 'editTrace', 'styleControls', 'toggleTrace', 'backFrame', 'forwardFrame', 'undo', 'clearTrace', 'doneEditing']) {
+    const el = $(id);
+    if (el) el.disabled = busy;
+  }
+  const dropzone = $('dropzone'), newVideo = $('newVideo');
+  if (dropzone) dropzone.disabled = false;
+  if (newVideo) newVideo.disabled = false;
   syncExportEnabled();
 }
 function syncExportEnabled() {
@@ -382,7 +389,7 @@ async function analyze(signal, labels = {}) {
   const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
   const scan = document.createElement('canvas'); scan.width = Math.round(video.videoWidth * scale); scan.height = Math.round(video.videoHeight * scale);
   const scanCtx = scan.getContext('2d', { willReadFrequently: true });
-  const worker = new Worker(new URL('./worker.js?v=47', import.meta.url), { type: 'module' });
+  const worker = new Worker(new URL('./worker.js?v=48', import.meta.url), { type: 'module' });
   try {
     const params = new URLSearchParams(location.search), from = Math.max(0, Number(params.get('diagnosticFrom')) || 0);
     const diagnostics = params.has('diagnostics') ? { from, to: from + 1 } : null;
@@ -589,16 +596,22 @@ async function exportVideo() {
 }
 
 $('fileInput').addEventListener('change', event => { handleIncomingFiles(event.target.files); event.target.value = ''; });
-async function pickNewVideo() {
+function pickNewVideo() {
+  // File pickers must open in the same synchronous user-gesture turn (Safari/Chrome).
+  // Never await before input.click() or the dialog is silently blocked.
+  if (state.busy) {
+    state.controller?.abort();
+    setBusy(false);
+  }
   if (isPreviewFullscreen()) {
     try {
-      if (document.exitFullscreen) await document.exitFullscreen();
+      if (document.exitFullscreen) document.exitFullscreen();
       else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
     } catch { /* continue to file picker */ }
   }
   $('fileInput').click();
 }
-$('dropzone').onclick = $('newVideo').onclick = () => pickNewVideo();
+$('dropzone').onclick = $('newVideo').onclick = pickNewVideo;
 for (const type of ['dragenter', 'dragover']) $('dropzone').addEventListener(type, event => { event.preventDefault(); $('dropzone').classList.add('dragover'); });
 for (const type of ['dragleave', 'drop']) $('dropzone').addEventListener(type, event => { event.preventDefault(); $('dropzone').classList.remove('dragover'); });
 $('dropzone').addEventListener('drop', event => handleIncomingFiles(event.dataTransfer.files));
