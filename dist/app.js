@@ -1,5 +1,6 @@
-import { cameraAt, visiblePath } from './tracker.js?v=41';
-import { smoothFlight } from './curve.js?v=41';
+import { cameraAt, visiblePath } from './tracker.js?v=42';
+import { smoothFlight } from './curve.js?v=42';
+import { plannedSampleTimes, isNearDuplicateTime } from './frame-source.js?v=42';
 
 const $ = id => document.getElementById(id);
 const canvas = $('preview'), ctx = canvas.getContext('2d'), video = $('video');
@@ -213,7 +214,9 @@ function frameSignature(pixels) {
   return sum;
 }
 async function captureAnalysisFrames(scan, scanCtx, fps, signal) {
-  const frames = Math.ceil(video.duration * fps);
+  const targets = plannedSampleTimes(video.duration, fps);
+  const frames = targets.length;
+  // Each slot: { pixels, t } where t is the actual media time after seek.
   const captured = Array.from({ length: frames }, () => null);
   const seekable = video.seekable?.length ? video.seekable.end(video.seekable.length - 1) : 0;
   // Uploaded blobs are seekable. Precise seeks give the tracker real launch
@@ -223,11 +226,16 @@ async function captureAnalysisFrames(scan, scanCtx, fps, signal) {
     ? 'Reading video frames…'
     : 'Reading video frames… Keep this tab visible.';
   if (canSeek) {
+    let prevT = -Infinity;
     for (let i = 0; i < frames; i++) {
       if (signal.aborted) throw abortError();
-      await seek(video, Math.min(i / fps, video.duration - .002), signal);
+      await seek(video, targets[i], signal);
+      const t = video.currentTime;
       scanCtx.drawImage(video, 0, 0, scan.width, scan.height);
-      captured[i] = new Uint8ClampedArray(scanCtx.getImageData(0, 0, scan.width, scan.height).data);
+      const pixels = new Uint8ClampedArray(scanCtx.getImageData(0, 0, scan.width, scan.height).data);
+      const duplicate = isNearDuplicateTime(prevT, t);
+      captured[i] = { pixels, t, targetT: targets[i], duplicate };
+      prevT = t;
       $('progress').value = (i + 1) / frames * 55;
       if (i % 10 === 0) $('busyText').textContent = `Reading video frames… ${i + 1} / ${frames}`;
     }
@@ -256,7 +264,12 @@ async function captureAnalysisFrames(scan, scanCtx, fps, signal) {
       const i = Math.max(0, Math.min(frames - 1, Math.round(mediaTime * fps)));
       if (!captured[i]) {
         scanCtx.drawImage(video, 0, 0, scan.width, scan.height);
-        captured[i] = new Uint8ClampedArray(scanCtx.getImageData(0, 0, scan.width, scan.height).data);
+        captured[i] = {
+          pixels: new Uint8ClampedArray(scanCtx.getImageData(0, 0, scan.width, scan.height).data),
+          t: mediaTime,
+          targetT: targets[i],
+          duplicate: false
+        };
         const filled = captured.reduce((n, frame) => n + (frame ? 1 : 0), 0);
         $('progress').value = filled / frames * 45;
         if (filled % 10 === 0) $('busyText').textContent = `Reading video frames… ${filled} / ${frames}`;
@@ -274,20 +287,29 @@ async function captureAnalysisFrames(scan, scanCtx, fps, signal) {
   for (let i = 0; i < frames; i++) {
     if (captured[i]) continue;
     if (signal.aborted) throw abortError();
-    await seek(video, Math.min(i / fps, video.duration - .002), signal);
+    await seek(video, targets[i], signal);
     scanCtx.drawImage(video, 0, 0, scan.width, scan.height);
-    captured[i] = new Uint8ClampedArray(scanCtx.getImageData(0, 0, scan.width, scan.height).data);
+    captured[i] = {
+      pixels: new Uint8ClampedArray(scanCtx.getImageData(0, 0, scan.width, scan.height).data),
+      t: video.currentTime,
+      targetT: targets[i],
+      duplicate: false
+    };
     $('progress').value = 45 + (i + 1) / frames * 10;
   }
   // Replace accidental duplicate samples when a later seek is possible.
   for (let i = 1; i < frames; i++) {
     if (!captured[i] || !captured[i - 1]) continue;
-    if (frameSignature(captured[i]) !== frameSignature(captured[i - 1])) continue;
+    if (frameSignature(captured[i].pixels) !== frameSignature(captured[i - 1].pixels)) continue;
     try {
-      await seek(video, Math.min(i / fps, video.duration - .002), signal);
+      await seek(video, targets[i], signal);
       scanCtx.drawImage(video, 0, 0, scan.width, scan.height);
       const next = new Uint8ClampedArray(scanCtx.getImageData(0, 0, scan.width, scan.height).data);
-      if (frameSignature(next) !== frameSignature(captured[i - 1])) captured[i] = next;
+      if (frameSignature(next) !== frameSignature(captured[i - 1].pixels)) {
+        captured[i] = { pixels: next, t: video.currentTime, targetT: targets[i], duplicate: false };
+      } else {
+        captured[i].duplicate = true;
+      }
     } catch { /* keep the duplicate rather than abort analysis */ }
   }
   return captured;
@@ -297,27 +319,37 @@ async function analyze(signal, labels = {}) {
   const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
   const scan = document.createElement('canvas'); scan.width = Math.round(video.videoWidth * scale); scan.height = Math.round(video.videoHeight * scale);
   const scanCtx = scan.getContext('2d', { willReadFrequently: true });
-  const worker = new Worker(new URL('./worker.js?v=41', import.meta.url), { type: 'module' });
+  const worker = new Worker(new URL('./worker.js?v=42', import.meta.url), { type: 'module' });
   try {
     const params = new URLSearchParams(location.search), from = Math.max(0, Number(params.get('diagnosticFrom')) || 0);
     const diagnostics = params.has('diagnostics') ? { from, to: from + 1 } : null;
     await workerCall(worker, { type: 'init', width: scan.width, height: scan.height, diagnostics }, signal);
-    const frames = Math.ceil(video.duration * 30);
+    const targets = plannedSampleTimes(video.duration, 30);
+    const frames = targets.length;
     // Prefetch frames before the worker loop. Seek when the media is seekable
     // (normal uploads); fall back to play-sampling only when seeking is broken.
     const captured = video.duration <= 16
       ? await captureAnalysisFrames(scan, scanCtx, 30, signal)
       : null;
+    let prevT = -Infinity;
+    let duplicateStamps = 0;
     for (let i = 0; i < frames; i++) {
       if (signal.aborted) throw abortError();
-      const t = Math.min(i / 30, video.duration - .002);
-      let pixels = captured?.[i];
-      if (!pixels) {
-        await seek(video, t, signal);
+      let sample = captured?.[i];
+      if (!sample) {
+        await seek(video, targets[i], signal);
         scanCtx.drawImage(video, 0, 0, scan.width, scan.height);
-        pixels = new Uint8ClampedArray(scanCtx.getImageData(0, 0, scan.width, scan.height).data);
+        sample = {
+          pixels: new Uint8ClampedArray(scanCtx.getImageData(0, 0, scan.width, scan.height).data),
+          t: video.currentTime,
+          targetT: targets[i],
+          duplicate: isNearDuplicateTime(prevT, video.currentTime)
+        };
       }
-      const copy = new Uint8ClampedArray(pixels);
+      const t = Number.isFinite(sample.t) ? sample.t : targets[i];
+      if (sample.duplicate || isNearDuplicateTime(prevT, t)) duplicateStamps++;
+      prevT = t;
+      const copy = new Uint8ClampedArray(sample.pixels);
       await workerCall(worker, { type: 'frame', buffer: copy.buffer, time: t }, signal, [copy.buffer]);
       $('progress').value = 55 + (i + 1) / frames * 45;
       if (i % 15 === 0) {
@@ -325,6 +357,12 @@ async function analyze(signal, labels = {}) {
         $('busyText').textContent = `${prefix}Analyzing frame ${i + 1} of ${frames} · ${Math.round((i + 1) / frames * 100)}%`;
       }
     }
+    canvas.dataset.frameTimingDiagnostic = JSON.stringify({
+      sampleFps: 30,
+      planned: frames,
+      duplicateStamps,
+      note: 'Association uses measured video.currentTime after seek when available.'
+    });
     const result = await workerCall(worker, { type: 'finish' }, signal);
     const { frames: diagnosticFrames, ...diagnosticSummary } = result;
     canvas.dataset.trackingDiagnostic = JSON.stringify(diagnosticSummary);

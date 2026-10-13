@@ -5,3 +5,10 @@ node_modules/
 .local/
 .openai/
 dist/qa/*.mp4
+
+# Local tracking evaluation (never commit user videos or labels)
+tests/fixtures/local-manifest.json
+tests/fixtures/annotations/
+tests/fixtures/local/
+docs/benchmark-runs/*.json
+!docs/benchmark-runs/.gitkeep

@@ -4,6 +4,8 @@ A private, browser-local golf tracer prototype. Upload a video, try automatic mo
 
 See [architecture, progress, and known issues](ARCHITECTURE_AND_PROGRESS.md) for the implementation handoff and the unresolved real-video tracking bugs.
 
+**Tracking V2 work** (automatic ball identity): start at [docs/TRACKING_V2_AUDIT.md](docs/TRACKING_V2_AUDIT.md), design [docs/TRACKING_V2_DESIGN.md](docs/TRACKING_V2_DESIGN.md), and measured baseline [docs/TRACKING_V2_BENCHMARK.md](docs/TRACKING_V2_BENCHMARK.md).
+
 ## Run
 
 `npm run dev` serves the buildless app at http://127.0.0.1:5173. There are no npm dependencies. `npm test` runs synthetic tracking and trace timing tests.
@@ -13,7 +15,7 @@ See [architecture, progress, and known issues](ARCHITECTURE_AND_PROGRESS.md) for
 - Browser-decodable MP4, MOV, or WebM, up to 250 MB and 30 seconds.
 - Experimental bright-ball motion detection at 30 samples per second and up to 1280 pixels on the long edge, using a worker, connected components, simple translation compensation, and temporal association. Launches are anchored to a previously stationary ball. Broad image changes suppress new tracks.
 - Both left- and right-moving rising launches are considered, without an angle preset.
-- A second pass follows the detected ball in a moving patch at native video resolution, using local contrast and motion to retain faint, distant balls. It stops after repeated misses rather than switching to a stationary highlight.
+- A native-resolution `BallRefiner` **exists in the repo but is not connected** to the live `analyze()` path (disabled after clothing/airplane false positives). Do not treat distant-ball refinement as currently active in the UI.
 - A time-aware, shape-preserving cubic curve smooths the trace through the observed positions, including its turn at the apex. Preview and export use the same curve.
 - Manual time-indexed point correction, undo, color, width, glow, and persistent/trailing lines.
 - Canvas compositing and MediaRecorder export at up to 1080p/30 fps, preserving aspect ratio and audio. Uses MP4 when the browser supports it, otherwise WebM. Exports run in real time and cancel when the tab is hidden.
@@ -35,4 +37,11 @@ Next useful step: benchmark a properly licensed model against representative dow
 
 ## Verification
 
-Node tests cover synthetic ball motion, bright clutter, thin club reflections, a one-frame occlusion, faint-ball refinement, static distractors, smooth-curve bounds, and time-based rendering. They do not establish real golf performance. Browser QA should include file decoding, worker execution, manual edits, cancellation, and checking that exported video has the tracer and an audio stream.
+```bash
+npm test
+# Real-video offline baseline (requires ffmpeg + local-manifest paths):
+cp tests/fixtures/manifest.example.json tests/fixtures/local-manifest.json
+npm run eval:tracking -- --json docs/benchmark-runs/run.json --md docs/benchmark-runs/run.md
+```
+
+Node tests cover synthetic ball motion, bright clutter, thin club reflections, a one-frame occlusion, faint-ball refinement, static distractors, smooth-curve bounds, metrics helpers, and time-based rendering. They do **not** establish real golf performance. Offline FFmpeg eval records track statistics; shot-level accuracy requires source-pixel annotations. Browser QA should include file decoding, worker execution, cancellation, and checking that exported video has the tracer and an audio stream.

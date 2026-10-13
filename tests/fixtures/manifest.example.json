@@ -1,0 +1,69 @@
+{
+  "baselineLabel": "tracking-v1",
+  "fps": 30,
+  "longEdge": 1280,
+  "tolerancesPx": [5, 10, 20],
+  "notes": [
+    "Copy to tests/fixtures/local-manifest.json and point path fields at local videos.",
+    "Never commit real videos or personal annotation exports.",
+    "Coordinates in annotations are upright SOURCE pixels (after display rotation).",
+    "Split by whole video/session: use split=tune|holdout — never split adjacent frames."
+  ],
+  "clips": [
+    {
+      "id": "golf_slow_mo",
+      "path": "/ABS/PATH/golf_slow_mo.mp4",
+      "split": "holdout",
+      "tags": ["slow-mo", "portrait", "historical-failure"],
+      "annotation": "annotations/golf_slow_mo.json",
+      "skip": true,
+      "skipReason": "Historical clip path not configured. Documented impact ~4.43s; false track historically ~3.47s."
+    },
+    {
+      "id": "golf_swing",
+      "path": "/ABS/PATH/golf_swing.mp4",
+      "split": "holdout",
+      "tags": ["normal-speed", "portrait", "airplane-distractor"],
+      "annotation": "annotations/golf_swing.json",
+      "skip": true,
+      "skipReason": "Historical clip path not configured. Documented launch ~2.13s; airplane switch historically ~4.1s."
+    },
+    {
+      "id": "pxl_qa",
+      "path": "../../dist/qa/pxl.mp4",
+      "split": "tune",
+      "tags": ["qa", "portrait", "pixel-phone"],
+      "annotation": null
+    },
+    {
+      "id": "pxl300_qa",
+      "path": "../../dist/qa/pxl300.mp4",
+      "split": "tune",
+      "tags": ["qa", "portrait", "pixel-phone"],
+      "annotation": null
+    },
+    {
+      "id": "example_annotation_shape",
+      "path": "/ABS/PATH/example.mp4",
+      "split": "tune",
+      "skip": true,
+      "skipReason": "Illustrative annotation only",
+      "annotationInline": {
+        "impactT": 4.43,
+        "maxImpactErrorSec": 0.35,
+        "maxLaunchErrorPx": 60,
+        "addressBall": { "t": 4.4, "x": 618, "y": 1327 },
+        "lastVisibleT": 6.2,
+        "distractors": [
+          { "label": "golfer_highlight", "t": 3.47, "x": 108, "y": 1298 }
+        ],
+        "frames": [
+          { "t": 4.43, "status": "visible", "x": 620, "y": 1310 },
+          { "t": 4.6, "status": "visible", "x": 640, "y": 1180 },
+          { "t": 5.5, "status": "uncertain" },
+          { "t": 7.0, "status": "not_visible" }
+        ]
+      }
+    }
+  ]
+}
