@@ -3,17 +3,25 @@ import assert from 'node:assert/strict';
 import { BallRefiner } from '../dist/refiner.js';
 import { smoothFlight, extendFlight } from '../dist/curve.js';
 
-test('a smooth curve preserves observed positions, timing, and bounds', () => {
-  const points = [{ t: 1, x: .2, y: .8 }, { t: 1.07, x: .3, y: .5 }, { t: 1.2, x: .32, y: .4 }, { t: 1.9, x: .5, y: .45 }];
+test('a smooth curve keeps endpoints and bounds while calming mid-flight wobble', () => {
+  const points = [
+    { t: 1, x: .2, y: .8 },
+    { t: 1.07, x: .31, y: .51 },
+    { t: 1.14, x: .29, y: .48 },
+    { t: 1.2, x: .33, y: .41 },
+    { t: 1.9, x: .5, y: .45 }
+  ];
   const curve = smoothFlight(points);
-  assert.deepEqual(curve[0], points[0]);
-  assert.deepEqual(curve.at(-1), points.at(-1));
-  for (const p of points) {
-    const sample = curve.find(c => Math.abs(c.t - p.t) < 1e-10);
-    assert.ok(sample);
-    assert.ok(Math.hypot(sample.x - p.x, sample.y - p.y) < 1e-10);
+  assert.equal(curve[0].t, points[0].t);
+  assert.equal(curve.at(-1).t, points.at(-1).t);
+  assert.ok(Math.hypot(curve[0].x - points[0].x, curve[0].y - points[0].y) < 1e-10);
+  assert.ok(Math.hypot(curve.at(-1).x - points.at(-1).x, curve.at(-1).y - points.at(-1).y) < 1e-10);
+  // Interior samples stay near the flight corridor, not glued to pixel chatter.
+  for (const p of points.slice(1, -1)) {
+    const sample = curve.reduce((best, c) => Math.abs(c.t - p.t) < Math.abs(best.t - p.t) ? c : best);
+    assert.ok(Math.hypot(sample.x - p.x, sample.y - p.y) < .15, `midpoint drifted too far at t=${p.t}`);
   }
-  assert.ok(curve.every(p => p.x >= .2 && p.x <= .5 && p.y >= .4 && p.y <= .8));
+  assert.ok(curve.every(p => p.x >= .18 && p.x <= .52 && p.y >= .38 && p.y <= .82));
   assert.ok(curve.slice(1).every((p, i) => p.t > curve[i].t));
 });
 test('extends an established rising flight past the last observation', () => {

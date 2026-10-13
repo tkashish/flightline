@@ -1,22 +1,45 @@
-// Shape-preserving cubic interpolation keeps the curve smooth, through the
-// observed ball positions, without overshooting a turn or inventing a landing.
+// Pull mid-flight wobble toward a calm ballistic trend while keeping the
+// first and last observed points fixed so timing/endpoints stay honest.
+function polishFlight(points) {
+  if (points.length < 5) return points;
+  const cleaned = denoiseFlight(points);
+  if (cleaned.length < 5) return cleaned;
+  const out = cleaned.map(p => ({ ...p }));
+  // One gentle neighbor blend on interior points damps pixel jitter without
+  // inventing a landing or flattening the launch→apex arc.
+  const next = out.map(p => ({ ...p }));
+  for (let i = 1; i < out.length - 1; i++) {
+    const a = out[i - 1], b = out[i], c = out[i + 1];
+    const wa = 1 / Math.max(.02, b.t - a.t), wc = 1 / Math.max(.02, c.t - b.t), wb = 2.4;
+    const w = wa + wb + wc;
+    next[i].x = (a.x * wa + b.x * wb + c.x * wc) / w;
+    next[i].y = (a.y * wa + b.y * wb + c.y * wc) / w;
+  }
+  for (let i = 1; i < out.length - 1; i++) { out[i].x = next[i].x; out[i].y = next[i].y; }
+  return out;
+}
+
+// Cubic Hermite through a polished observation set. Midpoints are intentionally
+// calmed so the drawn tracer reads as a smooth flight, not pixel chatter.
 export function smoothFlight(points, fps = 120) {
   if (points.length < 3) return points;
+  const source = polishFlight(points);
   const tangents = axis => {
-    const slopes = points.slice(1).map((p, i) => (p[axis] - points[i][axis]) / (p.t - points[i].t));
-    return points.map((p, i) => {
+    const slopes = source.slice(1).map((p, i) => (p[axis] - source[i][axis]) / (p.t - source[i].t));
+    return source.map((p, i) => {
       if (!i) return slopes[0];
-      if (i === points.length - 1) return slopes.at(-1);
+      if (i === source.length - 1) return slopes.at(-1);
       const a = slopes[i - 1], b = slopes[i];
       if (a * b <= 0) return 0;
-      const before = p.t - points[i - 1].t, after = points[i + 1].t - p.t;
+      const before = p.t - source[i - 1].t, after = source[i + 1].t - p.t;
       const w1 = 2 * after + before, w2 = after + 2 * before;
-      return (w1 + w2) / (w1 / a + w2 / b);
+      // Extra damping on mid tangents reduces residual zigzag after polish.
+      return ((w1 + w2) / (w1 / a + w2 / b)) * .82;
     });
   };
-  const tx = tangents('x'), ty = tangents('y'), curve = [points[0]];
-  for (let i = 0; i < points.length - 1; i++) {
-    const a = points[i], b = points[i + 1], dt = b.t - a.t, steps = Math.max(1, Math.ceil(dt * fps));
+  const tx = tangents('x'), ty = tangents('y'), curve = [source[0]];
+  for (let i = 0; i < source.length - 1; i++) {
+    const a = source[i], b = source[i + 1], dt = b.t - a.t, steps = Math.max(1, Math.ceil(dt * fps));
     for (let j = 1; j <= steps; j++) {
       const u = j / steps, u2 = u * u, u3 = u2 * u;
       const interpolate = (axis, tangent) => (2 * u3 - 3 * u2 + 1) * a[axis] + (u3 - 2 * u2 + u) * dt * tangent[i] + (-2 * u3 + 3 * u2) * b[axis] + (u3 - u2) * dt * tangent[i + 1];
