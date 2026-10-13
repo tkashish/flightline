@@ -6,7 +6,7 @@
   <title>Flightline</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23183e30'/%3E%3Cpath d='M15 48Q27 0 48 20' stroke='%23d1ef8c' stroke-width='5' fill='none'/%3E%3Ccircle cx='48' cy='20' r='5' fill='white'/%3E%3C/svg%3E">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-  <link rel="stylesheet" href="styles.css?v=45">
+  <link rel="stylesheet" href="styles.css?v=46">
 </head>
 <body class="app-shell">
   <main class="app-main">
@@ -46,8 +46,13 @@
           <button class="text-button" id="help" type="button">Tips for a better trace <span>↗</span></button>
         </div>
         <div id="editPanel" hidden>
-          <h2>Edit &amp; export</h2>
-          <div class="result-status" id="resultStatus" role="status"></div>
+          <h2>Trace &amp; export</h2>
+          <div class="result-status" id="resultStatus" role="status" data-status=""></div>
+          <p class="fine-print result-reasons" id="resultReasons" hidden></p>
+          <div class="confidence-row" id="confidenceRow" hidden>
+            <div class="confidence-label">Evidence <span id="confidenceNote">(relative)</span></div>
+            <div class="confidence-bar" aria-hidden="true"><span id="confidenceFill"></span></div>
+          </div>
           <fieldset id="styleControls">
             <legend>TRACER COLOR</legend>
             <div class="swatches">
@@ -60,16 +65,20 @@
             <label class="check-label"><input type="checkbox" id="glow" checked><span>Soft glow</span></label>
             <label class="check-label"><input type="checkbox" id="hold" checked><span>Keep the full flight visible</span></label>
           </fieldset>
-          <div class="panel-rule"></div>
-          <button class="outline-button" id="editTrace">Adjust the flight <span>⌁</span></button>
-          <div id="manualTools" hidden>
-            <p class="fine-print">Scrub to the ball, then click it. Add at least two points at different times.</p>
-            <div class="button-row"><button id="backFrame" aria-label="Back one frame">← Frame</button><button id="forwardFrame" aria-label="Forward one frame">Frame →</button></div>
-            <div class="button-row"><button id="undo">Undo point</button><button id="clearTrace">Clear trace</button></div>
-            <button class="outline-button" id="doneEditing">Done adjusting ✓</button>
-          </div>
           <button class="primary-button" id="export" disabled>Save video <span>↓</span></button>
           <p class="fine-print export-note" id="exportNote">Original audio · Up to 1080p · No watermark</p>
+          <div class="panel-rule"></div>
+          <details class="advanced-edit" id="advancedEdit">
+            <summary>Advanced · manual adjust (optional)</summary>
+            <p class="fine-print">Automatic mode never requires this. Use only if you want to override points.</p>
+            <button class="outline-button" id="editTrace">Adjust points <span>⌁</span></button>
+            <div id="manualTools" hidden>
+              <p class="fine-print">Scrub to the ball, then click it. Add at least two points at different times.</p>
+              <div class="button-row"><button id="backFrame" aria-label="Back one frame">← Frame</button><button id="forwardFrame" aria-label="Forward one frame">Frame →</button></div>
+              <div class="button-row"><button id="undo">Undo point</button><button id="clearTrace">Clear trace</button></div>
+              <button class="outline-button" id="doneEditing">Done adjusting ✓</button>
+            </div>
+          </details>
           <button class="text-button full" id="newVideo">Upload another swing</button>
         </div>
         <input id="fileInput" type="file" accept="video/*,.mp4,.mov,.webm" multiple hidden>
@@ -85,11 +94,11 @@
       <li><strong>Keep it steady.</strong> A fixed camera works best.</li>
       <li><strong>Keep it short.</strong> Half a second before impact, ball visible. Up to 30 seconds.</li>
       <li><strong>Let the ball stand out.</strong> Good light and contrast help.</li>
-      <li><strong>Adjust if needed.</strong> Use “Adjust the flight” for tough clips.</li>
+      <li><strong>Automatic first.</strong> If the ball cannot be identified, the app abstains — it will not invent a path.</li>
       <li><strong>Keep this tab visible</strong> while exporting.</li>
     </ol>
     <button class="primary-button" id="gotIt">Got it</button>
   </dialog>
-  <script type="module" src="app.js?v=45"></script>
+  <script type="module" src="app.js?v=46"></script>
 </body>
 </html>

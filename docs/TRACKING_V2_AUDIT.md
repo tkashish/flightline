@@ -54,8 +54,8 @@ File picker / drop
 | Native `BallRefiner` | **Exists, disconnected** |
 | Global offline path optimization | **Missing** |
 | Multi-hypothesis launch retention until sequence end | **Partial** (tracks array exists; decision favors early `best`) |
-| Calibrated abstention / reasonCodes | **Missing** (empty points → UI suggests manual adjust) |
-| Feature flag `legacy` vs `v2` | **Not yet** (eval CLI accepts `--engine legacy` only) |
+| Calibrated abstention / reasonCodes | **Phase 5:** relative confidence + `reasonCodes` UI; abstain locks export (not calibrated %) |
+| Feature flag `legacy` vs `v2` | **Landed** — UI defaults `v2`; `?engine=legacy` escape; eval CLI `--engine` |
 
 ## Frame timing and coordinates
 
@@ -100,5 +100,5 @@ Offline eval (after harness landed) is recorded in `docs/TRACKING_V2_BENCHMARK.m
 
 1. Do **not** reconnect `BallRefiner.detect()` as winner-takes-all without multi-candidate + global identity.
 2. Replacing `t=i/30` requires updating velocity gates to use real `dt`.
-3. UI currently nudges manual adjust on failure — keep control for compatibility but automatic flow must abstain cleanly (`no_reliable_track`) without requiring clicks.
+3. UI abstains on `no_reliable_track` without requiring clicks; manual adjust lives under Advanced (optional override).
 4. `smoothFlight` extension must not be scored as observed recall.

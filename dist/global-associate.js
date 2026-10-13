@@ -263,6 +263,7 @@ export function associateFlight({
     reasonCodes.push('ambiguous_launch');
   }
 
+  if (!launches.length) reasonCodes.push('no_launch');
   return {
     status,
     points,
@@ -347,17 +348,26 @@ export function toRendererResult(assoc, { width, height, camera = [], engine = '
   const points = (assoc.points || []).map(p => ({
     t: p.t,
     x: p.x / width,
-    y: p.y / height
+    y: p.y / height,
+    status: p.status || 'observed'
   }));
+  // Export/preview contract uses observed points only — never predicted fills.
+  const observed = points.filter(p => p.status === 'observed' || p.status == null);
   return {
-    points,
+    points: observed.map(({ t, x, y }) => ({ t, x, y })),
     camera,
     engine,
-    observedFrames: points.length,
+    observedFrames: observed.length,
     status: assoc.status,
     confidence: assoc.margin,
+    vsRunner: assoc.vsRunner,
     reasonCodes: assoc.reasonCodes || [],
     selectedLaunchId: assoc.selectedLaunchId || null,
-    diagnostics: { beams: assoc.beams, score: assoc.score, margin: assoc.margin }
+    diagnostics: {
+      beams: assoc.beams,
+      score: assoc.score,
+      margin: assoc.margin,
+      vsRunner: assoc.vsRunner
+    }
   };
 }

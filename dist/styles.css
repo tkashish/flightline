@@ -37,3 +37,21 @@ body.is-fullscreen{overflow:hidden}
   body.app-shell .stage{aspect-ratio:9/16;flex:none;min-height:52vh}
   body.app-shell .panel{border-top:1px solid var(--line)}
 }
+
+/* Phase 5 — track status / confidence / optional advanced edit */
+.result-status[data-status="tracked"]{background:#edf3e3;color:#526943}
+.result-status[data-status="partial"]{background:#f5efdd;color:#8b7345}
+.result-status[data-status="no_reliable_track"]{background:#f3e8e4;color:#8a5548}
+.result-reasons{margin:0 0 14px;color:var(--muted);line-height:1.55}
+.confidence-row{margin:0 0 18px}
+.confidence-label{font-size:9px;letter-spacing:.8px;text-transform:uppercase;color:#8a987a;margin-bottom:6px;display:flex;justify-content:space-between;gap:8px}
+.confidence-label span{text-transform:none;letter-spacing:0;font-size:10px}
+.confidence-bar{height:4px;background:#e6ebdf;border-radius:99px;overflow:hidden}
+.confidence-bar>span{display:block;height:100%;width:0;background:#6d8f4e;border-radius:99px;transition:width .25s ease}
+.result-status[data-status="partial"]~.confidence-row .confidence-bar>span{background:#b08945}
+.result-status[data-status="no_reliable_track"]~.confidence-row .confidence-bar>span{background:#a06b5c}
+.advanced-edit{margin-top:8px;border:1px solid #e1e7d6;border-radius:6px;padding:10px 12px;background:#fafbf6}
+.advanced-edit>summary{cursor:pointer;font-size:11px;color:#5a6b52;list-style:none}
+.advanced-edit>summary::-webkit-details-marker{display:none}
+.advanced-edit[open]>summary{margin-bottom:8px}
+.advanced-edit .outline-button{margin-top:8px}

@@ -1,13 +1,18 @@
-import { cameraAt, visiblePath } from './tracker.js?v=45';
-import { smoothFlight } from './curve.js?v=45';
-import { plannedSampleTimes, isNearDuplicateTime, suggestRingCapacity, rgbaBytes } from './frame-source.js?v=45';
+import { cameraAt, visiblePath } from './tracker.js?v=46';
+import { smoothFlight } from './curve.js?v=46';
+import { plannedSampleTimes, isNearDuplicateTime, suggestRingCapacity, rgbaBytes } from './frame-source.js?v=46';
+import { normalizeTrackReport } from './track-status.js?v=46';
 
 const $ = id => document.getElementById(id);
 const canvas = $('preview'), ctx = canvas.getContext('2d'), video = $('video');
 // Fat enough that small mid-flight wobble reads as one continuous ribbon.
 const TRACE_WIDTH = 14;
 const BULK_LIMIT = 25;
-const state = { demo: true, time: 0, playing: true, points: [], camera: [], color: '#f5fa9b', glow: true, hold: true, showTrace: true, editing: false, busy: false, url: null, file: null, controller: null, history: [], bulk: false };
+const state = {
+  demo: true, time: 0, playing: true, points: [], camera: [], color: '#f5fa9b', glow: true, hold: true,
+  showTrace: true, editing: false, busy: false, url: null, file: null, controller: null, history: [], bulk: false,
+  trackStatus: null, reasonCodes: [], confidence: null, engine: 'v2', exportable: false
+};
 const scene = new Image(); scene.src = 'scene.svg';
 let lastTime = performance.now(), toastTimer, audioContext, audioSource, monitor, curveSource, curvePoints;
 const demoPoints = Array.from({ length: 100 }, (_, i) => {
@@ -20,13 +25,60 @@ function setBusy(busy, title = '', detail = '') {
   state.busy = busy; $('busyOverlay').hidden = !busy;
   $('busyTitle').textContent = title; $('busyText').textContent = detail; $('progress').value = 0;
   for (const id of ['play', 'timeline', 'editTrace', 'newVideo', 'dropzone', 'styleControls', 'toggleTrace', 'backFrame', 'forwardFrame', 'undo', 'clearTrace', 'doneEditing']) $(id).disabled = busy;
-  $('export').disabled = !(!busy && !state.demo && state.points.length >= 2);
+  syncExportEnabled();
+}
+function syncExportEnabled() {
+  $('export').disabled = !(!state.busy && !state.demo && state.exportable && state.points.length >= 2);
+}
+function applyTrackReport(report) {
+  state.points = report.points;
+  state.camera = report.camera;
+  state.trackStatus = report.status;
+  state.reasonCodes = report.reasonCodes;
+  state.confidence = report.confidence;
+  state.exportable = report.exportable;
+  state.engine = report.engine || state.engine;
+  curveSource = null;
+  const statusEl = $('resultStatus');
+  statusEl.textContent = report.headline;
+  statusEl.dataset.status = report.status || '';
+  statusEl.classList.toggle('warn', report.status !== 'tracked');
+  const reasons = $('resultReasons');
+  if (report.reasonText?.length) {
+    reasons.hidden = false;
+    reasons.textContent = report.reasonText.join(' ');
+  } else {
+    reasons.hidden = true;
+    reasons.textContent = '';
+  }
+  const confRow = $('confidenceRow');
+  const fill = $('confidenceFill');
+  if (confRow && fill && report.confidence) {
+    confRow.hidden = false;
+    fill.style.width = `${Math.round(report.confidence.displayScore * 100)}%`;
+    $('confidenceNote').textContent = report.confidence.calibrated ? '' : '(relative evidence)';
+  } else if (confRow) {
+    confRow.hidden = true;
+  }
+  syncExportEnabled();
 }
 function setEditing(editing) {
   state.editing = editing; $('manualTools').hidden = !editing; $('stage').classList.toggle('editing', editing);
   $('editTrace').hidden = editing;
-  if (editing) { video.pause(); state.playing = false; updateStatus('Find the ball, then click to place a point. Scrub to continue.'); }
-  else if (!state.demo && state.points.length) updateStatus(state.points.length < 2 ? 'Place at least two points at different times to make a trace.' : `Possible flight found in ${state.points.length} frames.`, state.points.length < 2);
+  if (editing) {
+    video.pause(); state.playing = false;
+    $('resultStatus').textContent = 'Manual override · click the ball to place points.';
+    $('resultStatus').dataset.status = 'partial';
+  } else if (!state.demo) {
+    applyTrackReport(normalizeTrackReport({
+      points: state.points,
+      camera: state.camera,
+      status: state.trackStatus || (state.points.length >= 2 ? 'tracked' : 'no_reliable_track'),
+      reasonCodes: state.reasonCodes,
+      confidence: state.confidence?.marginOverNull,
+      engine: state.engine
+    }));
+  }
 }
 function abortError() { return new DOMException('Operation cancelled', 'AbortError'); }
 function seek(element, time, signal) {
@@ -56,24 +108,32 @@ function workerCall(worker, message, signal, transfer = []) {
     if (signal.aborted) return reject(abortError());
     const clean = () => { clearTimeout(timeout); worker.removeEventListener('message', done); worker.removeEventListener('error', failed); signal.removeEventListener('abort', aborted); };
     const done = event => { clean(); event.data.error ? reject(new Error(event.data.error)) : resolve(event.data); };
-    const failed = () => { clean(); reject(new Error('Automatic detection could not start. You can still place the trace manually.')); };
+    const failed = () => { clean(); reject(new Error('Automatic detection could not start.')); };
     const aborted = () => { clean(); reject(abortError()); };
-    const timeout = setTimeout(() => { clean(); reject(new Error('Detection timed out. You can still place the trace manually.')); }, 20000);
+    const timeout = setTimeout(() => { clean(); reject(new Error('Detection timed out.')); }, 20000);
     worker.addEventListener('message', done, { once: true }); worker.addEventListener('error', failed, { once: true }); signal.addEventListener('abort', aborted, { once: true });
     worker.postMessage(message, transfer);
   });
 }
-function updateStatus(message, warning = false) {
-  $('resultStatus').textContent = message; $('resultStatus').classList.toggle('warn', warning);
-  $('export').disabled = !(!state.busy && !state.demo && state.points.length >= 2);
+function updateStatus(message, warning = false, status = '') {
+  $('resultStatus').textContent = message;
+  $('resultStatus').classList.toggle('warn', warning);
+  if (status) $('resultStatus').dataset.status = status;
+  syncExportEnabled();
 }
 function resetDemo() {
   video.pause(); video.removeAttribute('src'); video.load();
   if (state.url) URL.revokeObjectURL(state.url);
-  Object.assign(state, { demo: true, time: 0, playing: true, url: null, file: null, points: [], camera: [], history: [], bulk: false });
+  Object.assign(state, {
+    demo: true, time: 0, playing: true, url: null, file: null, points: [], camera: [], history: [], bulk: false,
+    trackStatus: null, reasonCodes: [], confidence: null, exportable: false
+  });
   canvas.width = 1280; canvas.height = 720;
   $('uploadPanel').hidden = false; $('editPanel').hidden = true;
   $('timeline').max = 8; $('duration').textContent = '0:08';
+  $('resultReasons').hidden = true;
+  $('confidenceRow').hidden = true;
+  $('resultStatus').dataset.status = '';
   setEditing(false);
 }
 function isVideoFile(file) {
@@ -124,7 +184,18 @@ async function upload(file) {
   } catch (error) {
     if (!loaded) resetDemo();
     if (error.name !== 'AbortError') toast(error.message);
-    if (loaded) updateStatus(error.name === 'AbortError' ? 'Detection cancelled. You can place the trace manually.' : 'Detection unavailable. Add points with “Adjust the flight”.', true);
+    if (loaded && !state.exportable) {
+      applyTrackReport(normalizeTrackReport({
+        points: [],
+        camera: state.camera,
+        status: 'no_reliable_track',
+        reasonCodes: error.name === 'AbortError' ? ['decoder_limited'] : ['no_ball_evidence'],
+        engine: state.engine
+      }));
+      if (error.name === 'AbortError') $('resultStatus').textContent = 'Detection cancelled.';
+    } else if (loaded && error.name === 'AbortError') {
+      updateStatus('Cancelled.', true, state.trackStatus || '');
+    }
   } finally { setBusy(false); state.controller = null; }
 }
 function downloadBlob(blob, baseName) {
@@ -165,7 +236,7 @@ async function processBulk(files) {
           title: `Bulk ${label} · Finding flight…`,
           detail: `${file.name} · Keep this tab visible.`
         });
-        if (state.points.length < 2) {
+        if (!state.exportable || state.points.length < 2) {
           summary.skipped++;
           summary.names.push(`${file.name} (no reliable flight)`);
           continue;
@@ -311,11 +382,13 @@ async function analyze(signal, labels = {}) {
   const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
   const scan = document.createElement('canvas'); scan.width = Math.round(video.videoWidth * scale); scan.height = Math.round(video.videoHeight * scale);
   const scanCtx = scan.getContext('2d', { willReadFrequently: true });
-  const worker = new Worker(new URL('./worker.js?v=45', import.meta.url), { type: 'module' });
+  const worker = new Worker(new URL('./worker.js?v=46', import.meta.url), { type: 'module' });
   try {
     const params = new URLSearchParams(location.search), from = Math.max(0, Number(params.get('diagnosticFrom')) || 0);
     const diagnostics = params.has('diagnostics') ? { from, to: from + 1 } : null;
-    const engine = params.get('engine') === 'v2' ? 'v2' : 'legacy';
+    // Phase 5 default: v2 global association. Escape hatch: ?engine=legacy
+    const engine = params.get('engine') === 'legacy' ? 'legacy' : 'v2';
+    state.engine = engine;
     await workerCall(worker, { type: 'init', width: scan.width, height: scan.height, diagnostics, engine }, signal);
     const targets = plannedSampleTimes(video.duration, 30);
     const frames = targets.length;
@@ -365,25 +438,18 @@ async function analyze(signal, labels = {}) {
     const { frames: diagnosticFrames, ...diagnosticSummary } = result;
     canvas.dataset.trackingDiagnostic = JSON.stringify(diagnosticSummary);
     if (diagnostics) canvas.dataset.candidateDiagnostic = JSON.stringify(diagnosticFrames);
-    state.points = result.points; state.camera = result.camera;
-    curveSource = null;
-    // Native-resolution refinement was locking onto clothing after the ball
-    // faded. Keep the observed motion track only until that path is reliable.
-    if (result.status === 'no_reliable_track' || state.points.length < 2) {
-      updateStatus('Could not reliably identify the ball in this video.', true);
-    } else if (result.status === 'partial') {
-      updateStatus(`Partial flight · ${state.points.length} observed frames · ${video.videoWidth}×${video.videoHeight}`, true);
-    } else {
-      updateStatus(`Possible flight found in ${state.points.length} frames · ${video.videoWidth}×${video.videoHeight}`, true);
-    }
+    const report = normalizeTrackReport(result);
+    applyTrackReport(report);
   } finally { worker.terminate(); }
 }
 function drawTrace(time) {
   if (!state.showTrace) return;
+  // Abstention: never invent a tracer when automatic tracking failed.
+  if (!state.demo && (state.trackStatus === 'no_reliable_track' || state.points.length < 2)) return;
   const source = state.demo ? demoPoints : state.points;
   if (curveSource !== source) {
     curveSource = source;
-    // Extend the sparse observations first, then smooth so the join stays calm.
+    // Interpolate only between observed points — smoothFlight does not invent past the last observation.
     curvePoints = smoothFlight(source);
   }
   const path = visiblePath(curvePoints, time, state.hold);
@@ -499,6 +565,10 @@ async function recordExport(signal) {
   }
 }
 async function exportVideo() {
+  if (!state.exportable || state.points.length < 2) {
+    toast('No reliable ball flight to export.');
+    return;
+  }
   if (state.busy || state.demo || state.points.length < 2) return;
   video.pause();
   const oldTime = video.currentTime;
@@ -556,7 +626,16 @@ $('glow').onchange = event => setTracerGlow(event.target.checked);
 $('hold').onchange = event => setTracerHold(event.target.checked);
 $('editTrace').onclick = () => setEditing(true); $('doneEditing').onclick = () => setEditing(false);
 for (const [id, delta] of [['backFrame', -1 / 30], ['forwardFrame', 1 / 30]]) $(id).onclick = () => { video.pause(); seek(video, video.currentTime + delta).catch(error => toast(error.message)); };
-function manualStatus() { updateStatus(state.points.length < 2 ? 'Place at least two points at different times to make a trace.' : `${state.points.length} trace points · Preview your edits, then export.`, state.points.length < 2); }
+function manualStatus() {
+  state.exportable = state.points.length >= 2;
+  state.trackStatus = state.exportable ? 'tracked' : 'no_reliable_track';
+  updateStatus(
+    state.points.length < 2 ? 'Place at least two points at different times.' : `${state.points.length} manual points · Ready to export.`,
+    state.points.length < 2,
+    state.trackStatus
+  );
+  syncExportEnabled();
+}
 $('undo').onclick = () => { if (state.history.length) { state.points = state.history.pop(); manualStatus(); } };
 $('clearTrace').onclick = () => { state.history.push([...state.points]); state.points = []; manualStatus(); };
 canvas.addEventListener('click', async event => {

@@ -1,6 +1,6 @@
 # Tracking V2 — design (living doc)
 
-**Status:** Phases 0–3 landed; Phase 4 global association implemented behind `engine=v2`.  
+**Status:** Phases 0–5 landed. UI defaults to `engine=v2` with relative confidence + honest abstention.  
 **Constraint:** Browser-local upload → automatic ball track → export. No runtime manual ball/impact clicks.
 
 ## Target pipeline
@@ -18,8 +18,8 @@ Timestamp-aware decode (bounded cache)
 
 | Flag | Meaning |
 | --- | --- |
-| `legacy` | Forward `MotionTracker` ranking (default in UI). |
-| `v2` | Same detectors + Phase 4 beam association at `result()` (`?engine=v2` or `--engine v2`). Returns `status` / `reasonCodes` / may abstain. |
+| `v2` | **UI default.** Detectors + Phase 4 beam association. Returns `status` / `reasonCodes` / relative confidence; may abstain. Escape hatch: `?engine=legacy`. |
+| `legacy` | Forward `MotionTracker` ranking only (`?engine=legacy` or `--engine legacy`). |
 
 ## Coordinate systems
 

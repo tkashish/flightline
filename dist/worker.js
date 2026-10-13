@@ -1,11 +1,11 @@
-import { MotionTracker } from './tracker.js?v=45';
-import { BallRefiner } from './refiner.js?v=45';
-import { RoiEvidenceDetector } from './roi-evidence.js?v=45';
+import { MotionTracker } from './tracker.js?v=46';
+import { BallRefiner } from './refiner.js?v=46';
+import { RoiEvidenceDetector } from './roi-evidence.js?v=46';
 let tracker, diagnostics, frames, refiner, roiEvidence;
 self.onmessage = ({ data }) => {
   try {
     if (data.type === 'init') {
-      tracker = new MotionTracker(data.width, data.height, { engine: data.engine || 'legacy' });
+      tracker = new MotionTracker(data.width, data.height, { engine: data.engine || 'v2' });
       diagnostics = data.diagnostics;
       frames = [];
       self.postMessage({ ok: true });
