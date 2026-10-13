@@ -1,7 +1,7 @@
-import { cameraAt, visiblePath } from './tracker.js?v=50';
-import { smoothFlight } from './curve.js?v=50';
-import { plannedSampleTimes, isNearDuplicateTime, suggestRingCapacity, rgbaBytes } from './frame-source.js?v=50';
-import { normalizeTrackReport } from './track-status.js?v=50';
+import { cameraAt, visiblePath } from './tracker.js?v=51';
+import { smoothFlight } from './curve.js?v=51';
+import { plannedSampleTimes, isNearDuplicateTime, suggestRingCapacity, rgbaBytes } from './frame-source.js?v=51';
+import { normalizeTrackReport } from './track-status.js?v=51';
 
 const $ = id => document.getElementById(id);
 const canvas = $('preview'), ctx = canvas.getContext('2d'), video = $('video');
@@ -10,7 +10,7 @@ const TRACE_WIDTH = 14;
 const BULK_LIMIT = 25;
 const state = {
   demo: true, time: 0, playing: true, points: [], camera: [], color: '#f5fa9b', glow: true, hold: true,
-  showTrace: true, editing: false, busy: false, url: null, file: null, controller: null, history: [], bulk: false,
+  showTrace: true, editing: false, busy: false, exporting: false, url: null, file: null, controller: null, history: [], bulk: false,
   trackStatus: null, reasonCodes: [], confidence: null, engine: 'v2', exportable: false
 };
 const scene = new Image(); scene.src = 'scene.svg';
@@ -137,6 +137,7 @@ function resetDemo() {
     trackStatus: null, reasonCodes: [], confidence: null, exportable: false
   });
   canvas.width = 1280; canvas.height = 720;
+  video.hidden = true;
   $('uploadPanel').hidden = false; $('editPanel').hidden = true;
   $('timeline').max = 8; $('duration').textContent = '0:08';
   $('resultReasons').hidden = true;
@@ -160,6 +161,8 @@ function enterEditorChrome(file) {
   $('timeline').max = video.duration; $('duration').textContent = format(video.duration);
   if (!$('exportNote').querySelector('a')) $('exportNote').textContent = 'Original audio · Up to 1080p · No watermark';
   state.demo = false; state.file = file; state.playing = false;
+  // Show the real video element — canvas only draws the tracer on top.
+  video.hidden = false;
 }
 async function openSwing(file, signal, { title = 'Opening your swing…', detail = 'Your video stays on this device.' } = {}) {
   const invalid = validateVideoFile(file);
@@ -408,7 +411,7 @@ async function analyze(signal, labels = {}) {
   const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
   const scan = document.createElement('canvas'); scan.width = Math.round(video.videoWidth * scale); scan.height = Math.round(video.videoHeight * scale);
   const scanCtx = scan.getContext('2d', { willReadFrequently: true });
-  const worker = new Worker(new URL('./worker.js?v=50', import.meta.url), { type: 'module' });
+  const worker = new Worker(new URL('./worker.js?v=51', import.meta.url), { type: 'module' });
   try {
     const params = new URLSearchParams(location.search), from = Math.max(0, Number(params.get('diagnosticFrom')) || 0);
     const diagnostics = params.has('diagnostics') ? { from, to: from + 1 } : null;
@@ -514,10 +517,18 @@ function drawTrace(time) {
   ctx.restore();
 }
 function draw() {
-  ctx.fillStyle = '#152b21'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  if (state.demo) { if (scene.complete && scene.naturalWidth) ctx.drawImage(scene, 0, 0, canvas.width, canvas.height); }
-  else if (video.readyState >= 2 || (video.videoWidth > 0 && video.readyState >= 1)) {
-    try { ctx.drawImage(video, 0, 0, canvas.width, canvas.height); } catch { /* decode gap */ }
+  const composite = state.demo || state.exporting;
+  if (composite) {
+    ctx.fillStyle = '#152b21';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (state.demo) {
+      if (scene.complete && scene.naturalWidth) ctx.drawImage(scene, 0, 0, canvas.width, canvas.height);
+    } else if (video.readyState >= 2) {
+      try { ctx.drawImage(video, 0, 0, canvas.width, canvas.height); } catch { /* decode gap */ }
+    }
+  } else {
+    // Preview: native <video> is visible underneath; keep canvas transparent.
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
   drawTrace(state.demo ? state.time : video.currentTime);
   if (state.editing) {
@@ -554,7 +565,7 @@ async function recordExport(signal) {
   if (!mimeType) throw new Error('No compatible video encoder is available in this browser.');
   video.pause();
   const oldTrace = state.showTrace;
-  setEditing(false); state.showTrace = true;
+  setEditing(false); state.showTrace = true; state.exporting = true;
   let stream, recorder, destination, wakeLock;
   const visibility = () => { if (document.hidden) state.controller?.abort(); };
   document.addEventListener('visibilitychange', visibility);
@@ -597,6 +608,7 @@ async function recordExport(signal) {
     if (monitor) monitor.gain.value = 1; await wakeLock?.release();
     document.removeEventListener('visibilitychange', visibility);
     state.showTrace = oldTrace;
+    state.exporting = false;
   }
 }
 async function exportVideo() {

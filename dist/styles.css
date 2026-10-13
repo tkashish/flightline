@@ -71,12 +71,33 @@ body.is-fullscreen{overflow:hidden}
 }
 label.dropzone{cursor:pointer;box-sizing:border-box}
 
-/* Processing: let the scrubbing video show through so the stage is not a flat green plate. */
+/* Native video under transparent tracer canvas — avoids blank green during seek gaps. */
+.stage-video{
+  position:absolute;inset:0;
+  width:100%;height:100%;
+  object-fit:contain;
+  background:#152b21;
+  z-index:0;
+}
+body.app-shell .stage canvas,
+.stage canvas{
+  position:absolute;inset:0;
+  width:100%;height:100%;
+  object-fit:contain;
+  background:transparent;
+  z-index:1;
+  pointer-events:none;
+}
+.stage.editing canvas{pointer-events:auto;cursor:crosshair}
+.stage-video[hidden]{display:none!important}
+
+/* Processing: keep video visible under a light veil. */
 .busy-overlay{
-  background:linear-gradient(180deg, #142c25b8 0%, #142c25d6 100%);
-  backdrop-filter:blur(2px);
+  background:linear-gradient(180deg, #142c25a0 0%, #142c25c8 100%);
+  backdrop-filter:blur(1.5px);
   gap:6px;
   padding:24px;
+  z-index:5;
 }
 .busy-overlay strong{font-size:22px;letter-spacing:-.3px;text-shadow:0 1px 8px #0a1812a0}
 .busy-overlay p{font-size:13px;color:#d5e2cc;max-width:28rem}
