@@ -55,3 +55,18 @@ body.is-fullscreen{overflow:hidden}
 .advanced-edit>summary::-webkit-details-marker{display:none}
 .advanced-edit[open]>summary{margin-bottom:8px}
 .advanced-edit .outline-button{margin-top:8px}
+
+/* File input must NOT use display:none/hidden — browsers block programmatic picker opens. */
+.file-input{
+  position:absolute;
+  width:1px;
+  height:1px;
+  padding:0;
+  margin:-1px;
+  overflow:hidden;
+  clip:rect(0,0,0,0);
+  white-space:nowrap;
+  border:0;
+  opacity:0;
+}
+label.dropzone{cursor:pointer;box-sizing:border-box}

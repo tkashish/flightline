@@ -6,7 +6,7 @@
   <title>Flightline</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23183e30'/%3E%3Cpath d='M15 48Q27 0 48 20' stroke='%23d1ef8c' stroke-width='5' fill='none'/%3E%3Ccircle cx='48' cy='20' r='5' fill='white'/%3E%3C/svg%3E">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-  <link rel="stylesheet" href="styles.css?v=48">
+  <link rel="stylesheet" href="styles.css?v=49">
 </head>
 <body class="app-shell">
   <main class="app-main">
@@ -36,12 +36,13 @@
         <div id="uploadPanel">
           <h2>Upload a swing</h2>
           <p class="muted">Trace the flight. Export the replay.</p>
-          <button id="dropzone" class="dropzone">
+          <label id="dropzone" class="dropzone" for="fileInput">
             <span class="upload-icon"><svg viewBox="0 0 32 32"><path d="M16 21V5m-6 6 6-6 6 6M6 21v5a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5"/></svg></span>
             <strong>Drop video here</strong>
             <span>or <u>browse files</u></span>
             <small>MP4, MOV, WEBM · Up to 250 MB / 30 sec · Multiple OK</small>
-          </button>
+          </label>
+          <input id="fileInput" class="file-input" type="file" accept="video/*,.mp4,.mov,.webm" multiple>
           <p class="fine-print">Video stays on this device. Keep the tab visible while exporting.</p>
           <button class="text-button" id="help" type="button">Tips for a better trace <span>↗</span></button>
         </div>
@@ -79,9 +80,8 @@
               <button class="outline-button" id="doneEditing">Done adjusting ✓</button>
             </div>
           </details>
-          <button class="text-button full" id="newVideo">Upload another swing</button>
+          <button class="text-button full" id="newVideo" type="button">Upload another swing</button>
         </div>
-        <input id="fileInput" type="file" accept="video/*,.mp4,.mov,.webm" multiple hidden>
       </aside>
     </section>
   </main>
@@ -99,6 +99,6 @@
     </ol>
     <button class="primary-button" id="gotIt">Got it</button>
   </dialog>
-  <script type="module" src="app.js?v=48"></script>
+  <script type="module" src="app.js?v=49"></script>
 </body>
 </html>

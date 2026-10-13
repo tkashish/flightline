@@ -1,7 +1,7 @@
-import { cameraAt, visiblePath } from './tracker.js?v=48';
-import { smoothFlight } from './curve.js?v=48';
-import { plannedSampleTimes, isNearDuplicateTime, suggestRingCapacity, rgbaBytes } from './frame-source.js?v=48';
-import { normalizeTrackReport } from './track-status.js?v=48';
+import { cameraAt, visiblePath } from './tracker.js?v=49';
+import { smoothFlight } from './curve.js?v=49';
+import { plannedSampleTimes, isNearDuplicateTime, suggestRingCapacity, rgbaBytes } from './frame-source.js?v=49';
+import { normalizeTrackReport } from './track-status.js?v=49';
 
 const $ = id => document.getElementById(id);
 const canvas = $('preview'), ctx = canvas.getContext('2d'), video = $('video');
@@ -24,13 +24,12 @@ function toast(message) { clearTimeout(toastTimer); $('toast').textContent = mes
 function setBusy(busy, title = '', detail = '') {
   state.busy = busy; $('busyOverlay').hidden = !busy;
   $('busyTitle').textContent = title; $('busyText').textContent = detail; $('progress').value = 0;
-  // Keep dropzone / newVideo enabled so a stuck analyze cannot trap the file picker.
+  // Keep upload controls enabled so a stuck analyze cannot trap file picking.
   for (const id of ['play', 'timeline', 'editTrace', 'styleControls', 'toggleTrace', 'backFrame', 'forwardFrame', 'undo', 'clearTrace', 'doneEditing']) {
     const el = $(id);
     if (el) el.disabled = busy;
   }
-  const dropzone = $('dropzone'), newVideo = $('newVideo');
-  if (dropzone) dropzone.disabled = false;
+  const newVideo = $('newVideo');
   if (newVideo) newVideo.disabled = false;
   syncExportEnabled();
 }
@@ -177,7 +176,11 @@ async function openSwing(file, signal, { title = 'Opening your swing…', detail
   enterEditorChrome(file);
 }
 async function upload(file) {
-  if (!file || state.busy) return;
+  if (!file) return;
+  if (state.busy) {
+    state.controller?.abort();
+    setBusy(false);
+  }
   state.bulk = false;
   state.controller = new AbortController(); const signal = state.controller.signal;
   let loaded = false;
@@ -389,7 +392,7 @@ async function analyze(signal, labels = {}) {
   const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
   const scan = document.createElement('canvas'); scan.width = Math.round(video.videoWidth * scale); scan.height = Math.round(video.videoHeight * scale);
   const scanCtx = scan.getContext('2d', { willReadFrequently: true });
-  const worker = new Worker(new URL('./worker.js?v=48', import.meta.url), { type: 'module' });
+  const worker = new Worker(new URL('./worker.js?v=49', import.meta.url), { type: 'module' });
   try {
     const params = new URLSearchParams(location.search), from = Math.max(0, Number(params.get('diagnosticFrom')) || 0);
     const diagnostics = params.has('diagnostics') ? { from, to: from + 1 } : null;
@@ -596,9 +599,10 @@ async function exportVideo() {
 }
 
 $('fileInput').addEventListener('change', event => { handleIncomingFiles(event.target.files); event.target.value = ''; });
-function pickNewVideo() {
-  // File pickers must open in the same synchronous user-gesture turn (Safari/Chrome).
-  // Never await before input.click() or the dialog is silently blocked.
+function pickNewVideo(event) {
+  // Dropzone is a <label for="fileInput"> — native click already opens the picker.
+  // Only the "Upload another swing" button needs a programmatic open.
+  if (event?.currentTarget === $('dropzone')) return;
   if (state.busy) {
     state.controller?.abort();
     setBusy(false);
@@ -609,9 +613,10 @@ function pickNewVideo() {
       else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
     } catch { /* continue to file picker */ }
   }
+  // Input is visually hidden (not display:none) so this gesture is honored.
   $('fileInput').click();
 }
-$('dropzone').onclick = $('newVideo').onclick = pickNewVideo;
+$('newVideo').onclick = pickNewVideo;
 for (const type of ['dragenter', 'dragover']) $('dropzone').addEventListener(type, event => { event.preventDefault(); $('dropzone').classList.add('dragover'); });
 for (const type of ['dragleave', 'drop']) $('dropzone').addEventListener(type, event => { event.preventDefault(); $('dropzone').classList.remove('dragover'); });
 $('dropzone').addEventListener('drop', event => handleIncomingFiles(event.dataTransfer.files));
