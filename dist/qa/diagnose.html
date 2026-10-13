@@ -1,0 +1,70 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Flightline QA</title>
+<pre id="out">starting…</pre>
+<script type="module">
+import { MotionTracker } from '../tracker.js?v=17';
+const out = document.getElementById('out');
+const log = (...a) => { out.textContent += a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ') + '\n'; };
+try {
+  const video = document.createElement('video');
+  video.src = 'pxl.mp4';
+  video.muted = true;
+  video.playsInline = true;
+  await new Promise((res, rej) => { video.onloadeddata = res; video.onerror = () => rej(new Error('load fail')); });
+  const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
+  const w = Math.round(video.videoWidth * scale), h = Math.round(video.videoHeight * scale);
+  const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const frames = Math.ceil(video.duration * 30);
+  const captured = Array.from({ length: frames }, () => null);
+  log('meta', { w: video.videoWidth, h: video.videoHeight, dur: video.duration, frames, scan: [w, h] });
+  video.currentTime = 0;
+  await Promise.race([new Promise(r => video.addEventListener('seeked', r, { once: true })), new Promise(r => setTimeout(r, 1000))]);
+  await new Promise(resolve => {
+    const done = () => { video.pause(); clearTimeout(t); resolve(); };
+    const t = setTimeout(done, 15000);
+    const pump = () => {
+      const mediaTime = video.currentTime;
+      const i = Math.max(0, Math.min(frames - 1, Math.round(mediaTime * 30)));
+      if (!captured[i]) {
+        ctx.drawImage(video, 0, 0, w, h);
+        captured[i] = new Uint8ClampedArray(ctx.getImageData(0, 0, w, h).data);
+      }
+      if (mediaTime >= video.duration - .04 || video.ended) return done();
+      video.requestVideoFrameCallback(pump);
+    };
+    video.requestVideoFrameCallback(pump);
+    video.play().catch(done);
+  });
+  let filled = captured.filter(Boolean).length;
+  log('capturedFromPlay', filled);
+  for (let i = 0; i < frames; i++) {
+    if (captured[i]) continue;
+    video.currentTime = Math.min(i / 30, video.duration - .002);
+    await Promise.race([new Promise(r => video.addEventListener('seeked', r, { once: true })), new Promise(r => setTimeout(r, 1000))]);
+    ctx.drawImage(video, 0, 0, w, h);
+    captured[i] = new Uint8ClampedArray(ctx.getImageData(0, 0, w, h).data);
+  }
+  filled = captured.filter(Boolean).length;
+  let unique = 0, last = '';
+  for (const frame of captured) {
+    let s = 0; for (let p = 0; p < frame.length; p += 97) s = (s + frame[p]) | 0;
+    const key = String(s);
+    if (key !== last) unique++;
+    last = key;
+  }
+  log('filled', filled, 'unique', unique);
+  const tracker = new MotionTracker(w, h);
+  for (let i = 0; i < frames; i++) tracker.detect(captured[i], i / 30);
+  const result = tracker.result();
+  window.__qa = { count: result.points.length, first: result.points[0], last: result.points.at(-1), unique, filled };
+  log('RESULT', window.__qa);
+  document.title = `QA ${result.points.length} pts`;
+  out.dataset.done = '1';
+} catch (e) {
+  log('ERROR', String(e));
+  document.title = 'QA error';
+  out.dataset.done = '1';
+}
+</script>

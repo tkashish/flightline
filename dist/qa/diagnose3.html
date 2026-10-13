@@ -1,0 +1,113 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Flightline QA3</title>
+<pre id="out">starting…</pre>
+<script type="module">
+import { MotionTracker } from '../tracker.js?v=17';
+const out = document.getElementById('out');
+const log = (...a) => { out.textContent += a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ') + '\n'; };
+// Match the app: blob object URL from a fetched file (user upload path).
+const blob = await (await fetch('pxl.mp4')).blob();
+const url = URL.createObjectURL(blob);
+const video = document.createElement('video');
+video.src = url;
+video.muted = true;
+video.playsInline = true;
+await new Promise((res, rej) => { video.onloadeddata = res; video.onerror = () => rej(new Error('load fail')); });
+log('seekable', video.seekable.length ? [video.seekable.start(0), video.seekable.end(0)] : null, 'dur', video.duration, 'size', [video.videoWidth, video.videoHeight]);
+const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
+const w = Math.round(video.videoWidth * scale), h = Math.round(video.videoHeight * scale);
+const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const fps = 30;
+const frames = Math.ceil(video.duration * fps);
+const captured = Array.from({ length: frames }, () => null);
+
+function seek(t) {
+  return new Promise((resolve, reject) => {
+    const target = Math.max(0, Math.min(video.duration - .001, t));
+    const timeout = setTimeout(() => { clean(); resolve('timeout'); }, 8000);
+    const clean = () => { clearTimeout(timeout); video.removeEventListener('seeked', done); };
+    const done = () => { clean(); resolve('seeked'); };
+    video.addEventListener('seeked', done, { once: true });
+    video.currentTime = target;
+  });
+}
+
+// Play-capture like app.js
+video.pause();
+await seek(0);
+await new Promise(resolve => {
+  let settled = false;
+  const finish = () => { if (settled) return; settled = true; clearTimeout(watchdog); video.pause(); resolve(); };
+  const watchdog = setTimeout(finish, 15000);
+  const pump = () => {
+    if (settled) return;
+    const mediaTime = video.currentTime;
+    const i = Math.max(0, Math.min(frames - 1, Math.round(mediaTime * fps)));
+    if (!captured[i]) {
+      ctx.drawImage(video, 0, 0, w, h);
+      captured[i] = new Uint8ClampedArray(ctx.getImageData(0, 0, w, h).data);
+    }
+    if (mediaTime >= video.duration - .04 || video.ended) return finish();
+    video.requestVideoFrameCallback(pump);
+  };
+  video.requestVideoFrameCallback(pump);
+  video.play().catch(() => finish());
+});
+const fromPlay = captured.filter(Boolean).length;
+log('fromPlay', fromPlay);
+
+// Fill holes with seek (blob should seek)
+let seekFills = 0, seekTimeouts = 0;
+for (let i = 0; i < frames; i++) {
+  if (captured[i]) continue;
+  const r = await seek(Math.min(i / fps, video.duration - .002));
+  if (r === 'timeout') seekTimeouts++;
+  ctx.drawImage(video, 0, 0, w, h);
+  captured[i] = new Uint8ClampedArray(ctx.getImageData(0, 0, w, h).data);
+  seekFills++;
+}
+log('seekFills', seekFills, 'seekTimeouts', seekTimeouts);
+
+// uniqueness
+let unique = 0, last = '';
+for (const frame of captured) {
+  let s = 0; for (let p = 0; p < frame.length; p += 97) s = (s + frame[p]) | 0;
+  const key = String(s);
+  if (key !== last) unique++;
+  last = key;
+}
+log('unique', unique);
+
+const tracker = new MotionTracker(w, h);
+const diag = [];
+for (let i = 0; i < frames; i++) {
+  tracker.detect(captured[i], i / fps);
+  if (i >= 40 && i <= 80) {
+    const spots = tracker.spots
+      .filter(s => s.x > 400 && s.x < 520 && s.y > 650 && s.y < 850)
+      .map(s => ({ x: +s.x.toFixed(1), y: +s.y.toFixed(1), size: s.size, seen: s.seen, q: +s.quality.toFixed(3), moving: s.moving }));
+    const ballCand = (tracker.lastCandidates || [])
+      .filter(c => c.x > 420 && c.x < 470 && c.y > 700 && c.y < 760 && c.size >= 20)
+      .map(c => ({ x: +c.x.toFixed(1), y: +c.y.toFixed(1), size: c.size, q: +c.quality.toFixed(3), moving: c.moving }));
+    diag.push({
+      i, t: +(i / fps).toFixed(3),
+      nCand: tracker.lastCandidates.length,
+      moving: tracker.lastCandidates.filter(c => c.moving).length,
+      seedBlockedUntil: tracker.seedBlockedUntil,
+      tracks: tracker.tracks.length,
+      best: tracker.best?.points?.length || 0,
+      spots, ballCand
+    });
+  }
+}
+const result = tracker.result();
+window.__qa3 = { count: result.points.length, points: result.points, diag, unique, fromPlay, seekFills, seekTimeouts };
+log('RESULT', { count: result.points.length, first: result.points[0], last: result.points.at(-1) });
+const interesting = diag.filter(d => d.ballCand.length || d.spots.length || d.best);
+log('interesting', interesting.slice(0, 25));
+document.title = `QA3 ${result.points.length} pts`;
+out.dataset.done = '1';
+URL.revokeObjectURL(url);
+</script>

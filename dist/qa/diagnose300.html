@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>QA300</title>
+<pre id="out">starting…</pre>
+<script type="module">
+import { MotionTracker } from '../tracker.js?v=32';
+const out = document.getElementById('out');
+const log = (...a) => { out.textContent += a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ') + '\n'; };
+const video = document.createElement('video');
+video.src = 'pxl300.mp4'; video.muted = true; video.playsInline = true;
+await new Promise((res, rej) => { video.onloadeddata = res; video.onerror = () => rej(new Error('load')); });
+const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
+const w = Math.round(video.videoWidth * scale), h = Math.round(video.videoHeight * scale);
+const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const fps = 30, frames = Math.ceil(video.duration * fps);
+const seek = t => new Promise(resolve => {
+  const to = setTimeout(() => resolve('timeout'), 5000);
+  video.addEventListener('seeked', () => { clearTimeout(to); resolve('ok'); }, { once: true });
+  video.currentTime = Math.max(0, Math.min(video.duration - .001, t));
+});
+log('meta', { w: video.videoWidth, h: video.videoHeight, dur: video.duration, frames, seekable: video.seekable.length ? video.seekable.end(0) : 0 });
+const captured = [];
+for (let i = 0; i < frames; i++) {
+  await seek(Math.min(i / fps, video.duration - .002));
+  ctx.drawImage(video, 0, 0, w, h);
+  captured.push(new Uint8ClampedArray(ctx.getImageData(0, 0, w, h).data));
+}
+const tracker = new MotionTracker(w, h);
+for (let i = 0; i < frames; i++) tracker.detect(captured[i], i / fps);
+const result = tracker.result();
+const path = result.points.map(p => ({ t: +p.t.toFixed(3), x: +(p.x * w).toFixed(1), y: +(p.y * h).toFixed(1) }));
+window.__qa300 = { count: result.points.length, path, points: result.points };
+log('RESULT', { count: result.points.length, first: path[0], last: path.at(-1) });
+log('path', path);
+document.title = `QA300 ${result.points.length} pts`;
+out.dataset.done = '1';
+</script>

@@ -1,0 +1,81 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Flightline QA4</title>
+<pre id="out">starting…</pre>
+<script type="module">
+import { MotionTracker } from '../tracker.js?v=18';
+const out = document.getElementById('out');
+const log = (...a) => { out.textContent += a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ') + '\n'; };
+const video = document.createElement('video');
+video.src = 'pxl.mp4';
+video.muted = true;
+video.playsInline = true;
+await new Promise((res, rej) => { video.onloadeddata = res; video.onerror = () => rej(new Error('load fail')); });
+log('seekable', video.seekable.length ? [video.seekable.start(0), video.seekable.end(0)] : null);
+const w = Math.round(video.videoWidth * Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight)));
+const h = Math.round(video.videoHeight * Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight)));
+const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const fps = 30, frames = Math.ceil(video.duration * fps);
+const captured = Array.from({ length: frames }, () => null);
+const seek = t => new Promise(resolve => {
+  const to = setTimeout(() => { video.removeEventListener('seeked', done); resolve('timeout'); }, 5000);
+  const done = () => { clearTimeout(to); resolve('ok'); };
+  video.addEventListener('seeked', done, { once: true });
+  video.currentTime = Math.max(0, Math.min(video.duration - .001, t));
+});
+await seek(0);
+await new Promise(resolve => {
+  let settled = false;
+  const finish = () => { if (settled) return; settled = true; clearTimeout(wd); video.pause(); resolve(); };
+  const wd = setTimeout(finish, 20000);
+  const pump = () => {
+    if (settled) return;
+    const i = Math.max(0, Math.min(frames - 1, Math.round(video.currentTime * fps)));
+    if (!captured[i]) {
+      ctx.drawImage(video, 0, 0, w, h);
+      captured[i] = new Uint8ClampedArray(ctx.getImageData(0, 0, w, h).data);
+    }
+    if (video.currentTime >= video.duration - .04 || video.ended) return finish();
+    video.requestVideoFrameCallback(pump);
+  };
+  video.requestVideoFrameCallback(pump);
+  video.play().catch(finish);
+});
+let seekTimeouts = 0;
+for (let i = 0; i < frames; i++) {
+  if (captured[i]) continue;
+  if (await seek(i / fps) === 'timeout') seekTimeouts++;
+  ctx.drawImage(video, 0, 0, w, h);
+  captured[i] = new Uint8ClampedArray(ctx.getImageData(0, 0, w, h).data);
+}
+log('filled', captured.filter(Boolean).length, 'seekTimeouts', seekTimeouts, 'seekableAfter', video.seekable.length ? [video.seekable.start(0), video.seekable.end(0)] : null);
+
+const tracker = new MotionTracker(w, h);
+const events = [];
+for (let i = 0; i < frames; i++) {
+  tracker.detect(captured[i], i / fps);
+  const ball = (tracker.lastCandidates || []).filter(c =>
+    Math.hypot(c.x - 444, c.y - 732) < 25 && c.size >= 15 && c.quality >= .8
+  );
+  const spot = tracker.spots.filter(s => Math.hypot(s.x - 444, s.y - 732) < 25 && s.size >= 15);
+  if (ball.length || spot.length || (i >= 45 && i <= 70 && i % 5 === 0) || tracker.best) {
+    events.push({
+      i, t: +(i / fps).toFixed(3),
+      moving: tracker.lastCandidates.filter(c => c.moving).length,
+      n: tracker.lastCandidates.length,
+      blocked: tracker.seedBlockedUntil,
+      tracks: tracker.tracks.length,
+      bestLen: tracker.best?.points?.length || 0,
+      ball: ball.slice(0, 3).map(c => ({ x: +c.x.toFixed(1), y: +c.y.toFixed(1), size: c.size, q: +c.quality.toFixed(3), moving: c.moving })),
+      spot: spot.slice(0, 3).map(s => ({ x: +s.x.toFixed(1), y: +s.y.toFixed(1), size: s.size, seen: s.seen, q: +s.quality.toFixed(3), moving: s.moving, f: s.f }))
+    });
+  }
+}
+const result = tracker.result();
+window.__qa4 = { count: result.points.length, points: result.points, events };
+log('RESULT', { count: result.points.length, first: result.points[0], last: result.points.at(-1) });
+log('events', events);
+document.title = `QA4 ${result.points.length} pts`;
+out.dataset.done = '1';
+</script>

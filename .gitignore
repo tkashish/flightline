@@ -1,0 +1,7 @@
+.DS_Store
+node_modules/
+*.tar.gz
+*.tar
+.local/
+.openai/
+dist/qa/*.mp4
