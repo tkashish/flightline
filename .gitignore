@@ -12,3 +12,4 @@ tests/fixtures/annotations/
 tests/fixtures/local/
 docs/benchmark-runs/*.json
 !docs/benchmark-runs/.gitkeep
+tests/fixtures/synth/
