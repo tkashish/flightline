@@ -1,0 +1,12 @@
+run-node: hf on 10 clips of /tmp/flightline-understand/p2c-I2-bench/frozen/easy, /tmp/flightline-understand/p2c-I2-bench/frozen/smoke11 (easy+smoke), 6 jobs, engine 48eb71195abc (dirty), generator mixed, manifest e942b1680a5e (hashed in 0.2 s)
+[1/10] easy-11-fo30-iron7: abstained 4.1 s
+[2/10] easy-01-dtl30-iron7: tracked 5.2 s
+[3/10] easy-09-dtl120s-driver: tracked 5.3 s
+[4/10] easy-02-dtl30-wedge: tracked WRONG(completion) 5.4 s
+[5/10] easy-15-fo120s-driver: tracked 3.7 s
+[6/10] easy-05-dtl60-wedge: tracked WRONG(completion) 7.9 s
+[7/10] easy-17-oblique30-driver: tracked 3.9 s
+[8/10] easy-21-oblique120s-iron7: partial 5.1 s
+[9/10] smoke-13-fo120-rotated: abstained 4.3 s
+[10/10] smoke-04-dtl60-plane: tracked 9.7 s
+run-node: wrote /tmp/flightline-real/ablate/clean-plus-hold/bench.json and /tmp/flightline-real/ablate/clean-plus-hold/bench.md; gate FAIL (wrongGivenTraced, noBallFalseTrace, invisibleAbstain, coverageFoFast, recallSnr6, completionLongMedian, completionLongP90, landingTime, ece)

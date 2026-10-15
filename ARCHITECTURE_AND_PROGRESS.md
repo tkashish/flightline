@@ -39,7 +39,7 @@ flightline/
 │   ├── styles.css       Responsive layout and styling
 │   ├── scene.svg        Labeled, illustrated demo scene
 │   ├── app.js           Upload, decoding, analysis orchestration, editing, rendering, export
-│   ├── worker.js        Worker message handling for coarse tracking and refinement
+│   ├── worker.js        Tracking worker: init → frame × N → finish (any other message gets an error reply)
 │   ├── tracker.js       Candidate detection, camera translation, launch and track association
 │   ├── refiner.js       Native-resolution local ball tracking after coarse detection
 │   └── curve.js         Time-aware cubic interpolation of observed points
@@ -161,6 +161,9 @@ Selected video files remain in browser memory through object URLs; the applicati
 
 ## 4. Progress and evidence
 
+> The new `hf` engine (`?engine=hf`) and its results on real clips are tracked in
+> [docs/TRACKING_HF_STATUS.md](docs/TRACKING_HF_STATUS.md). The table below describes the older engines.
+
 | Area | Implementation and verification status |
 | --- | --- |
 | Upload, decode, preview | Implemented and exercised with both supplied MP4 files in the in-app browser. |
@@ -201,7 +204,7 @@ Selected video files remain in browser memory through object URLs; the applicati
 - The old size cap rejected the closer slow-motion ball. Component and stationary-source limits were increased, with a larger-ball regression test.
 - Jagged line segments were replaced with shape-preserving interpolation.
 - Full diagnostics attached to the canvas exceeded the browser automation message limit on longer clips. Diagnostic detail is now restricted to a one-second window.
-- Browser module caching could leave stale worker code during QA. Module URLs currently use `?v=9` to force the latest revision. This is a development workaround, not a full versioning system.
+- Browser module caching could leave stale worker code during QA. Module URLs carry a `?v=` cache-buster (currently `?v=52`); bump it in every importing file whenever a `dist/` module changes. This is a development workaround, not a full versioning system.
 
 ## 5. Open bugs and issues
 
@@ -217,7 +220,7 @@ Priority meanings: P0 blocks the core requested behavior; P1 materially affects 
 | BALL-06 | P2 | A faint ball, blur, grass highlights, bright sky, occlusion, or overlap can stop or contaminate the trace. The refiner also rejects very small motion, which can shorten tracking near the apex. | Known limitation. Evaluate visibility-aware association and reacquisition; avoid inventing unseen positions. |
 | BALL-07 | P2 | Cubic interpolation preserves noisy observations, so small coordinate errors can remain visible. | Open. Add an outlier-aware temporal fit with an error bound after ball identity is reliable. |
 | CAM-01 | P2 | Camera compensation handles approximate translation only, within a limited per-frame search. Pan, zoom, rotation, cuts, and exposure changes can break motion tests. | Known limitation. Add stronger stabilization or explicit unsupported-motion detection. |
-| TIME-01 | P2 | Fixed 30 fps sampling and frame-step controls do not use source frame timestamps. High-speed footage loses temporal detail, and variable frame rates can shift which frame is analyzed. | Open. Use decoded frame metadata where available and test frame-exact timing. |
+| TIME-01 | P2 | Fixed 30 fps sampling and frame-step controls do not use source frame timestamps. High-speed footage loses temporal detail, and variable frame rates can shift which frame is analyzed. | Partly addressed. Analysis samples real source frames at up to 30 per second, each stamped with its own timestamp (WebCodecs or rVFC frame clock, measured rate, the clip's own span). The ← Frame / Frame → controls still step 1/30 s. |
 | UI-01 | P2 | Portrait footage is shown in a fixed 16:9 stage, leaving substantial side space and making a small ball harder to review. | Known usability issue. Allow a portrait-appropriate review area or zoom. |
 | EXPORT-01 | P2 | Export is a real-time browser recording. It can be affected by rendering load, codec support, and tab visibility; MP4 is not guaranteed across browsers. | Known limitation. Broader browser/device and audio-sync testing is pending. |
 | STATE-01 | P2 | No persistence for uploaded clips, accepted tracks, or manual edits. Reloading resets the session. | Not implemented. Add local project save/restore if needed. |
@@ -257,7 +260,7 @@ Do not infer correctness from a diagnostic filename or number of observations. C
 
 ## 7. Recommended next steps and acceptance criteria
 
-1. Re-run both supplied videos in the browser with the latest `?v=9` modules. Inspect the actual ball before impact, through launch, and near the last observation. Export only after the trace is visually verified.
+1. Re-run both supplied videos in the browser with the latest `?v=` modules. Inspect the actual ball before impact, through launch, and near the last observation. Export only after the trace is visually verified.
 2. Resolve BALL-01 by evaluating track identity, early appearance consistency, and association failures. A longer path or better score alone is not success.
 3. Re-test the original airplane crossing against BALL-02. The trace must stay with the ball or stop when evidence is lost.
 4. Establish labeled ball coordinates/visibility for these clips and additional behind/face-on clips. Record launch-origin error, visible-frame recall, coordinate error, false-object tracks, endpoint timing, and manual correction effort.
