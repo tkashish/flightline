@@ -5,7 +5,7 @@ import {
   launchesFromHypotheses,
   mergeAssocFrames,
   toRendererResult
-} from './global-associate.js';
+} from './global-associate.js?v=53';
 
 export class MotionTracker {
   constructor(width, height, { engine = 'legacy' } = {}) {
@@ -57,15 +57,21 @@ export class MotionTracker {
     const vx = median(segs.map(s => s.vx)), vy = median(segs.map(s => s.vy));
     return { vx, vy, climb: -vy, speed: Math.hypot(vx, vy) };
   }
-  isBallisticHook(vx, vy, pvx, pvy) {
+  isBallisticHook(vx, vy, pvx, pvy, { strict = false } = {}) {
     const speed = Math.hypot(vx, vy), prevSpeed = Math.hypot(pvx, pvy);
     if (prevSpeed < .7 || speed < .35) return false;
     const prevClimb = -pvy, climb = -vy;
     if (prevSpeed < 12 && climb > prevClimb + .85 && climb > Math.max(1.0, prevClimb * 1.25 + .4)) return true;
-    const prevAng = Math.atan2(-pvy, pvx), ang = Math.atan2(-vy, vx);
-    const turn = Math.abs(Math.atan2(Math.sin(ang - prevAng), Math.cos(ang - prevAng)));
-    if (turn > .65) return true;
-    return prevSpeed < 8 && climb > .8 && Math.abs(ang) > Math.abs(prevAng) + .45;
+    const heading = Math.atan2(-vy, vx), prevHeading = Math.atan2(-pvy, pvx);
+    const turn = Math.abs(Math.atan2(Math.sin(heading - prevHeading), Math.cos(heading - prevHeading)));
+    // Gravity bends the path down without reversing or speeding up the run; that is not a hook.
+    const gravityBend = climb <= prevClimb + .25 && (Math.abs(pvx) < .3 || vx * pvx > 0) && Math.abs(vx) <= Math.abs(pvx) * 1.35 + .6;
+    if (turn > .65 && (strict || !gravityBend)) return true;
+    // Snap toward vertical, measured from the horizontal run so left and right flights match.
+    // Strict mode (weak sky peaks) also refuses a snap flat while the ball is still climbing.
+    const prevAng = Math.atan2(-pvy, Math.abs(pvx)), ang = Math.atan2(-vy, Math.abs(vx));
+    const snap = Math.abs(ang) - Math.abs(prevAng);
+    return prevSpeed < 8 && climb > .8 && (snap > .45 || (strict && snap < -.45));
   }
   detect(rgba, t) {
     const w = this.w, h = this.h, n = w * h;
@@ -112,7 +118,8 @@ export class MotionTracker {
     }
     // Mid-flight: globally-thresholded sky often misses a blue-cast ball. Search
     // a small window around each established track's predicted position.
-    const localBalls = this.localFlightCandidates(gray, rgba, t, shift);
+    // Never let a malformed coaster candidate reach linking or the v2 frame log.
+    const localBalls = this.localFlightCandidates(gray, rgba, t, shift).filter(finiteCandidate);
     for (const p of localBalls) {
       if (!candidates.some(c => Math.hypot(c.x - p.x, c.y - p.y) < 2.5)) candidates.push(p);
     }
@@ -193,7 +200,8 @@ export class MotionTracker {
     const highSky = last.y < h * .55;
     const minV = highSky ? 112 : 145;
     const minContrast = highSky ? 2.2 : 10;
-    const rad = Math.min(highSky ? 42 : 24, 10 + gap * (highSky ? 5 : 3.5));
+    // Integer radius: a half-pixel window reads gray[] between pixels and yields NaN candidates.
+    const rad = Math.round(Math.min(highSky ? 42 : 24, 10 + gap * (highSky ? 5 : 3.5)));
     const lastScreenY = last.y + this.offset.y;
     let peak = null, nearPeak = null;
     for (let y = Math.max(9, py - rad); y <= Math.min(h - 10, py + rad); y++) {
@@ -255,7 +263,8 @@ export class MotionTracker {
     const allowRise = smooth.vy <= -.08 && predDist <= 14
       && cand.y < predY - 1 && cand.y >= predY - Math.max(18, gap * 2.8 + 5);
     if (cand.y < predY - Math.max(5, gap * 1.3 + 1) && !allowRise) return [];
-    if (this.isBallisticHook(vx, vy, smooth.vx, smooth.vy)) return [];
+    // The coaster reads weak sky peaks near its own prediction, so it applies the strict hook rules.
+    if (this.isBallisticHook(vx, vy, smooth.vx, smooth.vy, { strict: true })) return [];
     return [cand];
   }
   identityScore(track) {
@@ -308,7 +317,27 @@ export class MotionTracker {
     for (const track of this.tracks) add(track);
     if (!pool.length) return null;
     pool.sort((a, b) => this.identityScore(b) - this.identityScore(a));
-    return pool[0];
+    const incumbent = this.best?.points?.length >= 5 ? this.best : null;
+    // Ranked first is not enough to take over: another launch must pass the promotion gates.
+    for (const track of pool) {
+      if (track === incumbent || this.canSwitchTo(track, incumbent)) return track;
+    }
+    return incumbent;
+  }
+  // Promotion gates for a track of another launch: an address-sized source, a clean rising flight,
+  // and, against an established flight, comparable evidence (no 5-point stub replaces a long track).
+  canSwitchTo(track, incumbent) {
+    const points = track.points, source = points[0], last = points.at(-1), n = points.length;
+    if (n < 5) return false;
+    const size = track.sourceSize ?? source.size ?? 0, quality = track.sourceQuality ?? source.quality ?? 0;
+    if (size < 16 || quality < .74 || (track.sourceCompactness ?? source.compactness ?? 1) < .55) return false;
+    if ((source.y - last.y) / this.h <= .065) return false;
+    const efficiency = Math.hypot(last.x - source.x, last.y - source.y) / Math.max(1, track.length || 0);
+    const meanCost = (track.cost || 0) / n;
+    if (!(efficiency > .85 && meanCost < .85) && !(n >= 8 && efficiency > .68 && meanCost < 1.05)) return false;
+    if (!incumbent) return true;
+    if (incumbent.points.length >= 10 && n < Math.min(incumbent.points.length, 12)) return false;
+    return this.identityScore(track) > this.identityScore(incumbent);
   }
   updateSpots(candidates) {
     const used = new Set();
@@ -566,9 +595,11 @@ export class MotionTracker {
         const turn = Math.abs(Math.atan2(Math.sin(ang2 - ang1), Math.cos(ang2 - ang1)));
         // Near-vertical coasts naturally wobble in atan2; only flag a real hook when
         // climb steepens while the heading snaps more upright from a diagonal.
-        const wasDiagonal = Math.abs(ang1) < 1.15;
+        // Elevation is measured from the horizontal run so left and right flights match.
+        const elev1 = Math.atan2(-vy1, Math.abs(vx1)), elev2 = Math.atan2(-vy2, Math.abs(vx2));
+        const wasDiagonal = Math.abs(elev1) < 1.15;
         sharpUp = (turn > .85 && climb2 > climb1 + .5)
-          || (wasDiagonal && speed1 < 8 && climb2 > climb1 + .9 && Math.abs(ang2) > Math.abs(ang1) + .55);
+          || (wasDiagonal && speed1 < 8 && climb2 > climb1 + .9 && Math.abs(elev2) > Math.abs(elev1) + .55);
       }
       const aboveCoast = midClimb != null && climb2 > midClimb + 2.2 && climb2 > 2.2;
       if (!antiGravity && !sharpUp && !aboveCoast) break;
@@ -629,28 +660,13 @@ export class MotionTracker {
       confidence: h.confidence,
       pointCount: h.pointCount
     }));
-
-    // Safety: if beam search collapses to a launch stump while the linker found a
-    // real flight, keep the linked observations so the UI does not regress.
-    const legacy = this.resultLegacy();
-    const assocLen = rendered.points.length;
-    const legacyLen = legacy.points.length;
-    if (legacyLen >= 8 && (rendered.status === 'no_reliable_track' || assocLen < Math.max(5, legacyLen * 0.35))) {
-      return {
-        ...legacy,
-        engine: 'global-v2',
-        confidence: assoc.margin ?? legacyLen,
-        reasonCodes: [...new Set([...(assoc.reasonCodes || []), ...(legacy.reasonCodes || [])])],
-        diagnostics: {
-          ...(rendered.diagnostics || {}),
-          fallback: 'legacy-link',
-          assocStatus: rendered.status,
-          assocFrames: assocLen
-        }
-      };
-    }
+    // A v2 abstention stays an abstention: the legacy linker never substitutes its own track.
     return rendered;
   }
+}
+
+function finiteCandidate(c) {
+  return Number.isFinite(c?.x) && Number.isFinite(c?.y) && Number.isFinite(c?.quality) && Number.isFinite(c?.size);
 }
 
 export function cameraAt(camera, time) {

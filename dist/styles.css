@@ -42,10 +42,11 @@ body.is-fullscreen{overflow:hidden}
 .result-status[data-status="tracked"]{background:#edf3e3;color:#526943}
 .result-status[data-status="partial"]{background:#f5efdd;color:#8b7345}
 .result-status[data-status="no_reliable_track"]{background:#f3e8e4;color:#8a5548}
+.result-status[data-status="manual"]{background:#eaeff2;color:#4b5d66}
 .result-reasons{margin:0 0 14px;color:var(--muted);line-height:1.55}
 .confidence-row{margin:0 0 18px}
 .confidence-label{font-size:9px;letter-spacing:.8px;text-transform:uppercase;color:#8a987a;margin-bottom:6px;display:flex;justify-content:space-between;gap:8px}
-.confidence-label span{text-transform:none;letter-spacing:0;font-size:10px}
+.confidence-label #confidenceNote{text-transform:none;letter-spacing:0;font-size:10px}
 .confidence-bar{height:4px;background:#e6ebdf;border-radius:99px;overflow:hidden}
 .confidence-bar>span{display:block;height:100%;width:0;background:#6d8f4e;border-radius:99px;transition:width .25s ease}
 .result-status[data-status="partial"]~.confidence-row .confidence-bar>span{background:#b08945}
@@ -56,7 +57,7 @@ body.is-fullscreen{overflow:hidden}
 .advanced-edit[open]>summary{margin-bottom:8px}
 .advanced-edit .outline-button{margin-top:8px}
 
-/* File input must NOT use display:none/hidden — browsers block programmatic picker opens. */
+/* Visually hidden file input; the dropzone label right after it is the visible control and shows its focus. */
 .file-input{
   position:absolute;
   width:1px;
@@ -70,6 +71,21 @@ body.is-fullscreen{overflow:hidden}
   opacity:0;
 }
 label.dropzone{cursor:pointer;box-sizing:border-box}
+.file-input:focus-visible+.dropzone{outline:3px solid #88aa4a;outline-offset:4px;background:#e5eecf;border-color:#76934e}
+
+/* Bulk batch: one row per clip with its outcome and download link. */
+.batch-results{margin:0 0 20px;border:1px solid #e1e7d6;border-radius:6px;padding:10px 12px;background:#fafbf6}
+.batch-title{font-size:9px;letter-spacing:.8px;text-transform:uppercase;color:#5a6b52;margin-bottom:4px}
+.batch-list{list-style:none;margin:0;padding:0;max-height:200px;overflow:auto;font-size:10px;line-height:1.5}
+.batch-list li{padding:5px 0;border-top:1px solid #edf0e6}
+.batch-list li:first-child{border-top:0}
+.batch-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.batch-note{display:block;color:#89917f}
+.batch-note a{color:#456836;text-underline-offset:2px}
+.batch-list [data-kind="saved"] .batch-note{color:#526943}
+.batch-list [data-kind="review"] .batch-note{color:#8b7345}
+.batch-list [data-kind="failed"] .batch-note{color:#8a5548}
+.batch-list [data-kind="active"] .batch-name{font-weight:700}
 
 /* Native video under transparent tracer canvas — avoids blank green during seek gaps. */
 .stage-video{
@@ -88,7 +104,8 @@ body.app-shell .stage canvas,
   z-index:1;
   pointer-events:none;
 }
-.stage.editing canvas{pointer-events:auto;cursor:crosshair}
+/* Edit mode: the tracer canvas takes the clicks (must outrank the app-shell rule above). */
+body.app-shell .stage.editing canvas,.stage.editing canvas{pointer-events:auto;cursor:crosshair}
 .stage-video[hidden]{display:none!important}
 
 /* Processing: keep video visible under a light veil. */

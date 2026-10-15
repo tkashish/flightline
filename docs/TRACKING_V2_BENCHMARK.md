@@ -60,9 +60,9 @@ Phase 0 did **not** claim browser export verification. Offline FFmpeg baseline o
 
 | Change | Effect on accuracy |
 | --- | --- |
-| `dist/frame-source.js` + tests | Infrastructure only |
-| `analyze()` uses `video.currentTime` after seek | Timing fidelity; **no claim of better ball identity** |
-| Ring-buffer helpers | Not yet replacing full RGBA prefetch |
+| `dist/frame-source.js` + tests | Infrastructure only (superseded: it now holds the frame clock, rate, clip span and sample schedule that `analyze()` and the offline runner use; see "Frame timing and eval semantics" below) |
+| `analyze()` uses `video.currentTime` after seek | Timing fidelity; **no claim of better ball identity** (superseded: `currentTime` is the seek target, not the shown frame; each sample now carries the shown frame's own timestamp) |
+| Ring-buffer helpers | Not yet replacing full RGBA prefetch (removed: frames stream to the worker one at a time; there is no ring buffer) |
 
 Re-run offline baseline expected to match `tracking-v1` observation counts within sampling noise (same detector). Accuracy claims deferred until labeled clips exist.
 
@@ -100,7 +100,7 @@ Re-run offline baseline expected to match `tracking-v1` observation counts withi
 ### Phase 3 code (not yet fused into live `analyze()` identity)
 
 - `dist/roi-evidence.js`: soft top-K ROI candidates (bright/dark DoG, temporal residual, matched-motion score)
-- Worker messages `roi-init` / `roi-frame` / `roi-reset` for diagnostics
+- Worker messages `roi-init` / `roi-frame` / `roi-reset` for diagnostics (removed later with `refine-*`: nothing sent them; the worker answers only `init`, `frame` and `finish`)
 - Unit tests: faint+bright coexistence, dark speck, multi-frame matched motion vs random
 - **Does not** reconnect legacy `BallRefiner.detect()` as winner-take-all
 
@@ -119,6 +119,21 @@ Shot-level pass/fail still requires source-pixel annotations (none yet). Report 
 | Default UI | still `legacy` until labeled smoke comparison favors v2 |
 
 No labeled shot-level claim yet.
+
+---
+
+## Frame timing and eval semantics — 2026-10-13
+
+| Change | Effect |
+| --- | --- |
+| Frame clock: the shown frame's WebCodecs `VideoFrame` timestamp after each seek (works in hidden tabs and without rVFC), else rVFC `mediaTime`; each is validated by seeking, and constant or target-echoing readers are rejected | Source rate, first frame and clip end are measured by seeks, and every sample carries its frame's own time. The rate (`sourceRate`, shared with the offline runner) is the median of the first 11 frame intervals; when that is below the 30 fps sample rate, 5 intervals a third and two thirds into the clip are measured too and the fastest stretch wins, so a slow start or a held first frame no longer undersamples the rest. Without a valid clock (Firefox 156 headless reports `0` and the seek target) the rate comes from short playbacks of the same stretches, stamps from the schedule, and exact pixel repeats are dropped |
+| Schedule over the clip's own span, first frame to just past the last | Clips whose first frame starts late (edit lists, B-frame starts) are analyzed in full, on the video's own timeline |
+| Offline runner and contact sheet decode with `-copyts` | Browser, runner and contact sheet share one clock and one frame set |
+| Eval: a pass needs visible flight labels; new `early_start` gate (`maxEarlyStartSec`, 0.1 s) | Launch-only annotations can fail a clip but never pass it; a track that starts on the address ball 0.2 s before impact fails |
+| Eval: recall interpolates the observed track only across gaps up to `maxGapSec` (0.1 s); observed points up to `maxOvershootSec` past the last visible label must continue its last segment; points after that but before a later `lastVisibleT` leave the clip undecided | A launch point plus one or two far-off samples no longer earns recall; a jump onto another object right after the last label fails `off_labeled_path`; an annotation whose labels stop before `lastVisibleT` cannot pass a track it does not cover |
+| Worker `roi-*` / `refine-*` handlers removed; unknown messages get an error reply | No dead protocol; a bad message fails at once instead of after the 30 s timeout |
+
+No accuracy claim (still no labeled holdout). Earlier runs are not directly comparable: `pass` now needs flight labels that cover the track, late-start clips moved onto the video's own clock, and clips that start slow are sampled at their faster rate.
 
 ---
 

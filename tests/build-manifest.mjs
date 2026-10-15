@@ -1,19 +1,24 @@
 #!/usr/bin/env node
 /**
  * Build a local-manifest.json from a folder of videos (gitignored output).
+ * tune/holdout is fixed per clip by its chronological position in the whole folder, so a clip
+ * keeps its split under any --limit or --stride.
  *
  * Usage:
  *   node tests/build-manifest.mjs --dir ~/Downloads/Photos-1-001 --out tests/fixtures/local-manifest.json
  *   node tests/build-manifest.mjs --dir ~/Downloads/Photos-1-001 --holdout-ratio 0.35
  */
 import { readdir, writeFile } from 'node:fs/promises';
-import { resolve, basename, extname } from 'node:path';
+import { resolve, basename, extname, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 function parseArgs(argv) {
   const out = {
     dir: null,
-    out: 'tests/fixtures/local-manifest.json',
+    out: resolve(root, 'tests/fixtures/local-manifest.json'),
     holdoutRatio: 0.35,
     includeQa: true,
     limit: null,
@@ -45,43 +50,46 @@ async function main() {
     process.exit(1);
   }
   const dir = expandHome(args.dir);
-  let names = (await readdir(dir))
+  const all = (await readdir(dir))
     .filter(n => /\.(mp4|mov|webm|m4v)$/i.test(n))
     .sort();
+  // Split over the full (chronological for PXL_ names) listing before any subsetting.
+  const holdoutCount = args.holdoutRatio > 0 ? Math.max(1, Math.round(all.length * args.holdoutRatio)) : 0;
+  const tuneEnd = Math.max(0, all.length - holdoutCount);
+  let picked = all.map((name, order) => ({ name, order, split: order < tuneEnd ? 'tune' : 'holdout' }));
   // Default to a small smoke subset — full corpus is opt-in via --limit 0 or a high limit.
   if (args.stride && args.stride > 1) {
-    names = names.filter((_, i) => i % args.stride === 0);
+    picked = picked.filter((_, i) => i % args.stride === 0);
   }
   if (args.limit == null) args.limit = 8;
-  if (args.limit > 0 && names.length > args.limit) {
+  if (args.limit > 0 && picked.length > args.limit) {
     // Spread picks across the session instead of taking only the first N.
     const picks = [];
     for (let i = 0; i < args.limit; i++) {
-      picks.push(names[Math.round(i * (names.length - 1) / Math.max(1, args.limit - 1))]);
+      picks.push(picked[Math.round(i * (picked.length - 1) / Math.max(1, args.limit - 1))]);
     }
-    names = [...new Set(picks)];
+    picked = [...new Set(picks)];
   }
-  const holdoutCount = Math.max(1, Math.round(names.length * args.holdoutRatio));
-  const tuneEnd = Math.max(0, names.length - holdoutCount);
 
-  const clips = names.map((name, i) => ({
+  const clips = picked.map(({ name, order, split }) => ({
     id: basename(name, extname(name)).replace(/[^a-zA-Z0-9._-]+/g, '_'),
     path: resolve(dir, name),
-    split: i < tuneEnd ? 'tune' : 'holdout',
-    tags: ['pixel-phone', 'photos-1-001', i < tuneEnd ? 'tune' : 'holdout']
+    split,
+    order,
+    tags: ['pixel-phone', 'photos-1-001', split]
   }));
 
   if (args.includeQa) {
     clips.unshift(
       {
         id: 'pxl_qa',
-        path: resolve('dist/qa/pxl.mp4'),
+        path: resolve(root, 'dist/qa/pxl.mp4'),
         split: 'tune',
         tags: ['qa']
       },
       {
         id: 'pxl300_qa',
-        path: resolve('dist/qa/pxl300.mp4'),
+        path: resolve(root, 'dist/qa/pxl300.mp4'),
         split: 'tune',
         tags: ['qa']
       }
@@ -96,7 +104,8 @@ async function main() {
     sourceDir: dir,
     notes: [
       'Auto-generated. Paths are machine-local and gitignored.',
-      'Split is chronological by filename within the folder (last holdout-ratio = holdout).',
+      `Split is chronological by filename over the whole folder (${all.length} videos; the last ${holdoutCount} are holdout), independent of --limit/--stride; order is the position in that listing.`,
+      'fps is the analysis sample rate; frames are picked from the source like the browser does (sourceFrameSchedule).',
       'Add annotation files later for shot-level pass/fail.'
     ],
     clips
@@ -105,7 +114,7 @@ async function main() {
   const outPath = resolve(args.out);
   await writeFile(outPath, JSON.stringify(manifest, null, 2));
   console.log(`Wrote ${outPath}`);
-  console.log(`Clips: ${clips.length} (tune≈${clips.filter(c => c.split === 'tune').length}, holdout≈${clips.filter(c => c.split === 'holdout').length})`);
+  console.log(`Clips: ${clips.length} (tune ${clips.filter(c => c.split === 'tune').length}, holdout ${clips.filter(c => c.split === 'holdout').length})`);
 }
 
 main().catch(err => {

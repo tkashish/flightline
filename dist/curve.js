@@ -1,30 +1,67 @@
-// Pull mid-flight wobble toward a calm ballistic trend while keeping the
-// first and last observed points fixed so timing/endpoints stay honest.
-function polishFlight(points) {
-  if (points.length < 5) return points;
-  const cleaned = denoiseFlight(points);
-  if (cleaned.length < 5) return cleaned;
-  const out = cleaned.map(p => ({ ...p }));
-  // Two neighbor blends calm pixel chatter so a fat stroke can hide the rest.
-  for (let pass = 0; pass < 2; pass++) {
-    const next = out.map(p => ({ ...p }));
-    for (let i = 1; i < out.length - 1; i++) {
-      const a = out[i - 1], b = out[i], c = out[i + 1];
-      const wa = 1 / Math.max(.02, b.t - a.t), wc = 1 / Math.max(.02, c.t - b.t), wb = 1.6;
-      const w = wa + wb + wc;
-      next[i].x = (a.x * wa + b.x * wb + c.x * wc) / w;
-      next[i].y = (a.y * wa + b.y * wb + c.y * wc) / w;
-    }
-    for (let i = 1; i < out.length - 1; i++) { out[i].x = next[i].x; out[i].y = next[i].y; }
+// Half the stroke half-width (14 px per 1280 px): every observation stays inside the drawn line.
+export const SMOOTH_TOLERANCE = 0.0025;
+const isManual = p => p.manual === true || p.status === 'manual';
+
+// Local quadratic in time around t (tricube weights times robustness weights) evaluated at t.
+function localTrend(points, i, weights, axis, half = 3) {
+  const lo = Math.max(0, i - half), hi = Math.min(points.length - 1, i + half), t0 = points[i].t;
+  let h = 0;
+  for (let j = lo; j <= hi; j++) h = Math.max(h, Math.abs(points[j].t - t0));
+  h = h * 1.0001 || 1;
+  const S = [0, 0, 0, 0, 0], Y = [0, 0, 0];
+  for (let j = lo; j <= hi; j++) {
+    const u = points[j].t - t0, d = Math.abs(u) / h, w = (1 - d * d * d) ** 3 * weights[j];
+    let m = w;
+    for (let k = 0; k < 5; k++) { S[k] += m; if (k < 3) Y[k] += m * points[j][axis]; m *= u; }
   }
-  return out;
+  // Solve [S0 S1 S2; S1 S2 S3; S2 S3 S4] c = Y for c0 (the value at t0), lightly ridged.
+  const a = [[S[0], S[1], S[2]], [S[1], S[2] + 1e-12, S[3]], [S[2], S[3], S[4] + 1e-12]];
+  const det = m3 => m3[0][0] * (m3[1][1] * m3[2][2] - m3[1][2] * m3[2][1]) - m3[0][1] * (m3[1][0] * m3[2][2] - m3[1][2] * m3[2][0]) + m3[0][2] * (m3[1][0] * m3[2][1] - m3[1][1] * m3[2][0]);
+  const D = det(a);
+  if (!Number.isFinite(D) || Math.abs(D) < 1e-18) return S[0] > 0 ? Y[0] / S[0] : points[i][axis];
+  const c0 = det([[Y[0], a[0][1], a[0][2]], [Y[1], a[1][1], a[1][2]], [Y[2], a[2][1], a[2][2]]]) / D;
+  return Number.isFinite(c0) ? c0 : points[i][axis];
 }
 
-// Cubic Hermite through a polished observation set. Midpoints are intentionally
-// calmed so the drawn tracer reads as a smooth flight, not pixel chatter.
-export function smoothFlight(points, fps = 120) {
+// Settle knots for drawing: a robust trend may move each interior observation by at most `tolerance`
+// (normalized units). Endpoints and manual points are exact and no observation is ever dropped.
+function settleFlight(points, tolerance, half = 4) {
+  const sorted = points.filter(p => [p.t, p.x, p.y].every(Number.isFinite)).sort((a, b) => a.t - b.t);
+  const knots = [];
+  for (const p of sorted) {
+    const last = knots.at(-1);
+    // Two samples at one instant cannot both lie on the curve; a manual one wins, else their mean.
+    if (last && p.t - last.t < 1e-6) {
+      if (isManual(p) && !isManual(last)) knots[knots.length - 1] = { ...p };
+      else if (isManual(p) === isManual(last)) knots[knots.length - 1] = { ...last, x: (last.x + p.x) / 2, y: (last.y + p.y) / 2 };
+      continue;
+    }
+    knots.push({ ...p });
+  }
+  if (knots.length < 5) return knots;
+  // Robust weights from residuals to a running median of 5: an isolated outlier barely moves the
+  // median, so it alone is down-weighted and cannot drag its neighbours' trend.
+  const med = (i, axis) => knots.slice(Math.max(0, i - 2), i + 3).map(p => p[axis]).sort((a, b) => a - b);
+  const res = knots.map((p, i) => { const mx = med(i, 'x'), my = med(i, 'y'); return Math.hypot(p.x - mx[mx.length >> 1], p.y - my[my.length >> 1]); });
+  const scale = Math.max(6 * [...res].sort((a, b) => a - b)[res.length >> 1], 2 * tolerance);
+  const weights = knots.map((p, i) => isManual(p) ? 20 : Math.max(0, 1 - (res[i] / scale) ** 2) ** 2);
+  const fit = knots.map((p, i) => ({ x: localTrend(knots, i, weights, 'x', half), y: localTrend(knots, i, weights, 'y', half) }));
+  for (let i = 1; i < knots.length - 1; i++) {
+    if (isManual(knots[i])) continue;
+    const dx = fit[i].x - knots[i].x, dy = fit[i].y - knots[i].y, d = Math.hypot(dx, dy);
+    if (!Number.isFinite(d)) continue;
+    const k = d > tolerance ? tolerance / d : 1;
+    knots[i].x += dx * k; knots[i].y += dy * k;
+  }
+  return knots;
+}
+
+// Cubic Hermite through settled observations: calm enough to read as a flight, yet every interior
+// observation lies within `tolerance` of the curve at its time and manual points lie on it exactly.
+export function smoothFlight(points, fps = 120, { tolerance = SMOOTH_TOLERANCE } = {}) {
   if (points.length < 3) return points;
-  const source = polishFlight(points);
+  const source = settleFlight(points, tolerance);
+  if (source.length < 3) return source;
   const tangents = axis => {
     const slopes = source.slice(1).map((p, i) => (p[axis] - source[i][axis]) / (p.t - source[i].t));
     return source.map((p, i) => {
@@ -34,7 +71,7 @@ export function smoothFlight(points, fps = 120) {
       if (a * b <= 0) return 0;
       const before = p.t - source[i - 1].t, after = source[i + 1].t - p.t;
       const w1 = 2 * after + before, w2 = after + 2 * before;
-      // Extra damping on mid tangents reduces residual zigzag after polish.
+      // Extra damping on mid tangents reduces residual zigzag between settled knots.
       return ((w1 + w2) / (w1 / a + w2 / b)) * .68;
     });
   };

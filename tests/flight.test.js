@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { BallRefiner } from '../dist/refiner.js';
 import { smoothFlight, extendFlight } from '../dist/curve.js';
 
 test('a smooth curve keeps endpoints and bounds while calming mid-flight wobble', () => {
@@ -155,32 +154,82 @@ test('does not invent an extension without a clear rising flight', () => {
   assert.equal(extendFlight(points, 5).length, points.length);
 });
 
-function faintFrame(x, y, brightness) {
-  const pixels = new Uint8ClampedArray(128 * 128 * 4);
-  for (let py = 0; py < 128; py++) for (let px = 0; px < 128; px++) {
-    const i = (py * 128 + px) * 4;
-    pixels.set([60, 100, 150, 255], i);
-    if (Math.hypot(px - x, py - y) < 1.5) pixels.set([60 + brightness, 100 + brightness, 150 + brightness, 255], i);
-    if (Math.hypot(px - 90, py - 35) < 1.5) pixels.set([240, 240, 240, 255], i);
-  }
-  return pixels;
+// ---- smoothFlight honours every observation (ui-render-export-I1 / refiner-curve-I1). ----
+import { SMOOTH_TOLERANCE } from '../dist/curve.js';
+
+const arc = t => ({ x: .5 + .12 * t, y: .8 - 1.6 * t + .9 * t * t });
+const sampleAt = (curve, t) => curve.find(c => Math.abs(c.t - t) < 1e-9);
+const miss = (curve, p) => { const c = sampleAt(curve, p.t); return c ? Math.hypot(c.x - p.x, c.y - p.y) : Infinity; };
+function jittered(n, amp, seed = 3) {
+  const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  return Array.from({ length: n }, (_, i) => { const t = i / 30, a = arc(t); return { t, x: a.x + (rnd() - .5) * 2 * amp, y: a.y + (rnd() - .5) * 2 * amp }; });
 }
-test('native refinement follows a faint moving ball and ignores a brighter static object', () => {
-  const refiner = new BallRefiner(128, 128, [{ t: 0, x: 35 / 128, y: 90 / 128 }, { t: 1 / 30, x: 37 / 128, y: 88 / 128 }]);
-  for (let i = 1; i < 25; i++) refiner.detect(faintFrame(35 + i * 2, 90 - i * 2, 40 - i), 128, 128, 0, 0, i / 30);
-  const last = refiner.result().at(-1);
-  assert.ok(last.t >= 23 / 30);
-  assert.ok(Math.hypot(last.x * 128 - 83, last.y * 128 - 42) < 1);
+
+test('every interior observation lies within the tolerance of the drawn curve', () => {
+  for (const points of [jittered(60, .004), jittered(25, .0015)]) {
+    const curve = smoothFlight(points);
+    for (const p of points) assert.ok(miss(curve, p) <= SMOOTH_TOLERANCE + 1e-12, `t=${p.t} miss ${miss(curve, p)}`);
+    assert.ok(curve.slice(1).every((p, i) => p.t > curve[i].t));
+  }
 });
-test('refinement stops after losing the ball instead of extending into a static highlight', () => {
-  const refiner = new BallRefiner(128, 128, [{ t: 0, x: 70 / 128, y: 55 / 128 }, { t: 1 / 30, x: 72 / 128, y: 53 / 128 }]);
-  for (let i = 2; i < 20; i++) refiner.detect(faintFrame(-20, -20, 30), 128, 128, 0, 0, i / 30);
-  assert.equal(refiner.finished, true);
-  assert.ok(refiner.result().at(-1).t < .2);
+
+test('sparse clicks on an arc are honoured, apex included', () => {
+  for (const spacing of [.1, .2, .3]) {
+    const clicks = [];
+    for (let t = 0; t <= 1.8 + 1e-9; t += spacing) clicks.push({ t: +t.toFixed(4), ...arc(+t.toFixed(4)) });
+    const curve = smoothFlight(clicks);
+    for (const p of clicks) assert.ok(miss(curve, p) <= SMOOTH_TOLERANCE + 1e-12, `spacing ${spacing} t=${p.t}`);
+    const apex = Math.min(...clicks.map(p => p.y)), drawnApex = Math.min(...curve.map(p => p.y));
+    assert.ok(Math.abs(drawnApex - apex) <= SMOOTH_TOLERANCE + 1e-9, `apex ${apex} drawn ${drawnApex}`);
+  }
 });
-test('does not switch to a bright object moving in the opposite direction at a crossing', () => {
-  const refiner = new BallRefiner(128, 128, [{ t: 0, x: 80 / 128, y: 80 / 128 }, { t: 1 / 30, x: 82 / 128, y: 80 / 128 }]);
-  for (let i = 2; i < 12; i++) refiner.detect(faintFrame(83 - i, 80, 80), 128, 128, 0, 0, i / 30);
-  assert.equal(refiner.finished, true);
-  assert.equal(refiner.result().length, 2);
+
+test('a corrective click inside a dense automatic track is never dropped', () => {
+  // The automatic track drifts onto clothing at frame 15; the user clicks the real ball at frame 20.
+  const auto = Array.from({ length: 30 }, (_, i) => i < 15 ? { t: i / 30, ...arc(i / 30) } : { t: i / 30, x: .47 + (i - 15) * .002, y: .42 - (i - 15) * .002 });
+  const tc = 20 / 30;
+  const edited = [...auto.filter(p => Math.abs(p.t - tc) > 1 / 60), { t: tc, ...arc(tc) }].sort((a, b) => a.t - b.t);
+  const curve = smoothFlight(edited);
+  assert.ok(miss(curve, { t: tc, ...arc(tc) }) <= SMOOTH_TOLERANCE + 1e-12, `click missed by ${miss(curve, { t: tc, ...arc(tc) })}`);
+  for (const p of edited) assert.ok(sampleAt(curve, p.t), `no sample at t=${p.t}`);
+  // A click moved far sideways in a clean arc is honoured too.
+  const clicks = Array.from({ length: 13 }, (_, i) => ({ t: 2 + i * .1, ...arc(i * .1) }));
+  clicks[6] = { ...clicks[6], x: clicks[6].x + .1 };
+  assert.ok(miss(smoothFlight(clicks), clicks[6]) <= SMOOTH_TOLERANCE + 1e-12);
+});
+
+test('manual points lie exactly on the curve', () => {
+  const points = jittered(40, .004);
+  points[12] = { ...points[12], x: points[12].x + .03, manual: true };
+  points[25] = { ...points[25], y: points[25].y - .02, status: 'manual' };
+  const curve = smoothFlight(points);
+  assert.ok(miss(curve, points[12]) < 1e-12);
+  assert.ok(miss(curve, points[25]) < 1e-12);
+});
+
+test('the curve still calms chatter smaller than the tolerance', () => {
+  const points = jittered(60, .0015, 11);
+  const curve = smoothFlight(points);
+  const rms = f => Math.sqrt(points.reduce((s, p) => { const a = arc(p.t), q = f(p); return s + (q.x - a.x) ** 2 + (q.y - a.y) ** 2; }, 0) / points.length);
+  const raw = rms(p => p), drawn = rms(p => sampleAt(curve, p.t));
+  assert.ok(drawn < raw * .8, `drawn ${drawn} vs raw ${raw}`);
+});
+
+test('one wild point does not drag its neighbours off their observations', () => {
+  const points = Array.from({ length: 40 }, (_, i) => ({ t: i / 30, ...arc(i / 30) }));
+  points[20] = { ...points[20], y: points[20].y + .08 };
+  const curve = smoothFlight(points);
+  for (const i of [18, 19, 21, 22]) assert.ok(miss(curve, points[i]) < SMOOTH_TOLERANCE * .25, `neighbour ${i} moved ${miss(curve, points[i])}`);
+  assert.ok(miss(curve, points[20]) <= SMOOTH_TOLERANCE + 1e-12, 'the wild point itself is still visited');
+});
+
+test('two samples at one instant merge instead of breaking the curve', () => {
+  const points = Array.from({ length: 10 }, (_, i) => ({ t: i / 30, ...arc(i / 30) }));
+  points.splice(5, 0, { t: points[5].t, x: points[5].x + .01, y: points[5].y, manual: true });
+  points.splice(8, 0, { t: points[8].t, x: points[8].x + .004, y: points[8].y });
+  const curve = smoothFlight(points);
+  assert.ok(curve.every(p => [p.t, p.x, p.y].every(Number.isFinite)));
+  assert.ok(miss(curve, points[5]) < 1e-12, 'the manual sample wins');
+  assert.equal(curve.filter(c => Math.abs(c.t - points[5].t) < 1e-9).length, 1, 'one sample per instant');
+  assert.equal(curve.filter(c => Math.abs(c.t - points[8].t) < 1e-9).length, 1, 'one sample per instant');
 });

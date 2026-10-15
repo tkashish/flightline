@@ -3,7 +3,10 @@
 <title>QA300</title>
 <pre id="out">starting…</pre>
 <script type="module">
-import { MotionTracker } from '../tracker.js?v=40';
+import { MotionTracker } from '../tracker.js?v=53';
+import { FRAME_ENGINES, pickEngine } from '../frame-source.js?v=53';
+// The frame-fed engines (v2 by default); ?engine=legacy for the old linker. Unknown names (and hf) throw.
+const engine = pickEngine(new URLSearchParams(location.search).get('engine'), FRAME_ENGINES);
 const out = document.getElementById('out');
 const log = (...a) => { out.textContent += a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ') + '\n'; };
 const video = document.createElement('video');
@@ -26,11 +29,11 @@ for (let i = 0; i < frames; i++) {
   ctx.drawImage(video, 0, 0, w, h);
   captured.push(new Uint8ClampedArray(ctx.getImageData(0, 0, w, h).data));
 }
-const tracker = new MotionTracker(w, h);
+const tracker = new MotionTracker(w, h, { engine });
 for (let i = 0; i < frames; i++) tracker.detect(captured[i], i / fps);
 const result = tracker.result();
 const path = result.points.map(p => ({ t: +p.t.toFixed(3), x: +(p.x * w).toFixed(1), y: +(p.y * h).toFixed(1) }));
-window.__qa300 = { count: result.points.length, path, points: result.points };
+window.__qa300 = { engine: tracker.engine, count: result.points.length, path, points: result.points };
 log('RESULT', { count: result.points.length, first: path[0], last: path.at(-1) });
 log('path', path);
 document.title = `QA300 ${result.points.length} pts`;

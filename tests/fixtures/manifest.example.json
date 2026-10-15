@@ -7,7 +7,15 @@
     "Copy to tests/fixtures/local-manifest.json and point path fields at local videos.",
     "Never commit real videos or personal annotation exports.",
     "Coordinates in annotations are upright SOURCE pixels (after display rotation).",
-    "Split by whole video/session: use split=tune|holdout — never split adjacent frames."
+    "Label times are frame presentation times: copy t from contact-sheet frames.json (npm run eval:contact-sheet).",
+    "Split by whole video/session: use split=tune|holdout — never split adjacent frames.",
+    "fps is the analysis sample rate; source frames are picked like the browser (sourceFrameSchedule). Optional per clip: sourceFps.",
+    "A clip passes when every labeled gate holds: impact timing (maxImpactErrorSec, 0.35 s), launch anchor (maxLaunchErrorPx, 60 px), every observed point from the first visible label to maxOvershootSec (0.1 s) past the last within maxTrackErrorPx (default 2% of the source long edge) of the label path (past the last label: its last segment, extended), flight recall >= minRecall (0.5), and no observed point more than maxOvershootSec past the last visible label or a later lastVisibleT.",
+    "Recall interpolates the observed track only across gaps up to maxGapSec (0.1 s): a label inside a longer gap is a miss.",
+    "Label the flight through lastVisibleT: observed points after the label margin but before lastVisibleT have no label to check them, so the clip cannot pass (unknown_ground_truth).",
+    "Recall counts visible labels at or after impactT. With impactT unset, every visible label counts, including the ball sitting at address.",
+    "A ball-visible annotation (visible frames or an addressBall) fails when the engine abstains; use expectAbstention or ballVisible: false for clips with no ball flight.",
+    "A missing or unparsable annotation file is reported as an error with its path."
   ],
   "clips": [
     {
@@ -49,18 +57,20 @@
       "skip": true,
       "skipReason": "Illustrative annotation only",
       "annotationInline": {
-        "impactT": 4.43,
+        "impactT": 4.4333,
         "maxImpactErrorSec": 0.35,
         "maxLaunchErrorPx": 60,
+        "maxOvershootSec": 0.1,
         "addressBall": { "t": 4.4, "x": 618, "y": 1327 },
         "lastVisibleT": 6.2,
         "distractors": [
-          { "label": "golfer_highlight", "t": 3.47, "x": 108, "y": 1298 }
+          { "label": "golfer_highlight", "t": 3.4667, "x": 108, "y": 1298 }
         ],
         "frames": [
-          { "t": 4.43, "status": "visible", "x": 620, "y": 1310 },
+          { "t": 4.4667, "status": "visible", "x": 620, "y": 1310 },
           { "t": 4.6, "status": "visible", "x": 640, "y": 1180 },
           { "t": 5.5, "status": "uncertain" },
+          { "t": 6.2, "status": "visible", "x": 905, "y": 610 },
           { "t": 7.0, "status": "not_visible" }
         ]
       }

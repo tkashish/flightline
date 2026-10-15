@@ -1,10 +1,12 @@
 // Local diagnostic only. Never included in the deployed app.
+// Usage: node tests/inspect-video.mjs input.mp4 out.json [width height] [v2|legacy] (default: the app's engine, v2)
 import { spawn } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { MotionTracker } from '../dist/tracker.js';
+import { pickEngine } from '../dist/frame-source.js';
 const input = process.argv[2], output = process.argv[3];
-const w = Number(process.argv[4] || 540), h = Number(process.argv[5] || 960);
-const tracker = new MotionTracker(w, h), frames = [], frameSize = w * h * 4;
+const w = Number(process.argv[4] || 540), h = Number(process.argv[5] || 960), engine = pickEngine(process.argv[6]);
+const tracker = new MotionTracker(w, h, { engine }), frames = [], frameSize = w * h * 4;
 const processVideo = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-i', input, '-vf', `fps=30,scale=${w}:${h}`, '-f', 'rawvideo', '-pix_fmt', 'rgba', 'pipe:1']);
 let pending = Buffer.alloc(0), index = 0;
 for await (const chunk of processVideo.stdout) {
@@ -16,5 +18,5 @@ for await (const chunk of processVideo.stdout) {
   }
 }
 const result = tracker.result();
-await writeFile(output, JSON.stringify({ result, frames }));
-console.log(JSON.stringify({ frames: index, count: result.points.length, first: result.points[0], last: result.points.at(-1), output }));
+await writeFile(output, JSON.stringify({ engine: tracker.engine, result, frames }));
+console.log(JSON.stringify({ engine: tracker.engine, frames: index, count: result.points.length, first: result.points[0], last: result.points.at(-1), output }));

@@ -1,14 +1,14 @@
 # Tracking V2 — design (living doc)
 
-**Status:** Phases 0–5 landed. UI defaults to `engine=v2` with relative confidence + honest abstention.  
+**Status:** Phases 0–2, 4 and 5 run in the shipped analysis. Phase 3 ROI evidence (`dist/roi-evidence.js`) is a tested module that analysis does not call yet. UI defaults to `engine=v2` with relative confidence + honest abstention.  
 **Constraint:** Browser-local upload → automatic ball track → export. No runtime manual ball/impact clicks.
 
 ## Target pipeline
 
 ```
-Timestamp-aware decode (bounded cache)
+Timestamp-aware decode (frame clock, one frame in flight)
   → Coarse scan: camera motion + multiple LaunchHypothesis
-  → Per-hypothesis native ROI evidence (top-K soft candidates, multi-frame matched motion)
+  → Per-hypothesis native ROI evidence (top-K soft candidates, multi-frame matched motion; not wired in yet)
   → Global beam / second-order association + null state
   → Bidirectional smooth of OBSERVED points only; abstain if weak
   → Existing smoothFlight / preview / export contract

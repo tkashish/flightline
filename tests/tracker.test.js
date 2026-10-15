@@ -136,6 +136,7 @@ test('stops when the ball fades instead of creeping on a 1px glare tail', () => 
 test('rejects a late anti-gravity vertical hook after diagonal coasting', () => {
   // Fast launch, then a near-level diagonal coast. A sky speck then snaps upward.
   const tracker = new MotionTracker(720, 1280);
+  const hooks = [];
   let x = 440, y = 730, vx = 0, vy = 0;
   for (let i = 0; i < 42; i++) {
     tracker.frame = i;
@@ -160,17 +161,25 @@ test('rejects a late anti-gravity vertical hook after diagonal coasting', () => 
       size: 2, quality: .9, moving: true, roundness: 1, compactness: 1
     } : null;
     const candidates = hook ? [hook, ball] : [ball];
+    if (hook) hooks.push(hook);
     tracker.link(candidates.filter(p => p.moving), candidates);
     tracker.updateSpots(candidates);
   }
-  const raw = tracker.best?.points || [];
-  const coast = raw.slice(12);
-  let maxStepUp = 0;
-  for (let i = 1; i < coast.length; i++) {
-    const dt = Math.max(1, coast[i].f - coast[i - 1].f);
-    maxStepUp = Math.max(maxStepUp, (coast[i - 1].y - coast[i].y) / dt);
-  }
-  assert.ok(maxStepUp < 11, `sky hook jump ${maxStepUp.toFixed(1)} px/frame after launch`);
+  // Original f787233 assertion (weakened in 011df5e, which hid the apex regression).
+  const points = tracker.result().points;
+  assert.ok(points.length >= 10, `${points.length} points found`);
+  const last = points.at(-1);
+  const mid = points[Math.floor(points.length * .7)];
+  const lateRise = (mid.y - last.y) * 1280;
+  const lateRun = Math.abs(last.x - mid.x) * 720;
+  assert.ok(lateRise < Math.max(14, lateRun * 1.25 + 8),
+    `hooked upward: lateRise=${lateRise.toFixed(1)} lateRun=${lateRun.toFixed(1)}`);
+  // True coast stays near-level; a vertical speck would be much higher.
+  assert.ok(last.y * 1280 > mid.y * 1280 - 40, `climbed into vertical speck y=${last.y * 1280}`);
+  // The gravity bend at the apex is kept, so the track never rides the 2-px speck.
+  const onHook = points.filter(p => hooks.some(h => Math.abs(h.t - p.t) < 1e-9 && Math.hypot(h.x / 720 - p.x, h.y / 1280 - p.y) < 1e-6));
+  assert.equal(onHook.length, 0, `${onHook.length} speck points`);
+  assert.ok(Math.abs(last.t - 41 / 30) < 1e-9, `ball followed to the end, last t=${last.t}`);
 });
 test('rejects a sideways body highlight that steals the address seed', () => {
   // Mirrors PXL_20261011_184957300: address ball at mid-frame, then a large
@@ -315,4 +324,105 @@ test('camera positions interpolate and clamp at boundaries', () => {
   assert.deepEqual(cameraAt(camera, .5), { x: .05, y: .1 });
   assert.deepEqual(cameraAt(camera, 3), { x: .1, y: .2 });
   assert.deepEqual(cameraAt([], .5), { x: 0, y: 0 });
+});
+test('hook verdicts are mirror-symmetric: left and right flights are judged alike', () => {
+  const tracker = new MotionTracker(720, 1280);
+  const cases = [
+    { v: [1.0, -3.5], pv: [3, -3], hook: true },   // snaps ~29 deg toward vertical
+    { v: [2.0, -1.5], pv: [1, -2], hook: false },  // normal flattening
+    { v: [3, -3], pv: [1, -3.5], hook: false },    // normal flattening
+    { v: [-1.6, -1.0], pv: [-0.8, -2.0], hook: false }
+  ];
+  for (const { v, pv, hook } of cases) {
+    assert.equal(tracker.isBallisticHook(v[0], v[1], pv[0], pv[1]), hook, `right ${v}`);
+    assert.equal(tracker.isBallisticHook(-v[0], v[1], -pv[0], pv[1]), hook, `mirrored ${v}`);
+  }
+});
+test('gravity-consistent bends are not hooks; anti-gravity turns and reversals still are', () => {
+  const tracker = new MotionTracker(720, 1280);
+  for (const s of [1, -1]) {
+    assert.equal(tracker.isBallisticHook(s * .5, 0, s * .5, -.9), false, 'apex turnover');
+    assert.equal(tracker.isBallisticHook(s * .5, .2, s * .5, -.9), false, 'apex into descent');
+    assert.equal(tracker.isBallisticHook(s * 2.2, -.4, s * 2.25, -2.95), false, 'coast bending down');
+    assert.equal(tracker.isBallisticHook(s * .3, -2.5, s * 2, -1), true, 'diagonal to vertical up');
+    assert.equal(tracker.isBallisticHook(-s * 2, -.5, s * 2, -1), true, 'horizontal reversal');
+    assert.equal(tracker.isBallisticHook(s * 3, .2, s * 1, -2), true, 'sharp bend that also speeds the run up');
+    assert.equal(tracker.isBallisticHook(s * .1, -.7, s * 2, -.3), true, 'sharp turn upward: only the turn rule sees it');
+  }
+});
+test('the sky coaster keeps strict hook rules for its weak sky peaks', () => {
+  const tracker = new MotionTracker(720, 1280);
+  for (const s of [1, -1]) {
+    assert.equal(tracker.isBallisticHook(s * .5, 0, s * .5, -.9, { strict: true }), true, 'no gravity-bend allowance');
+    assert.equal(tracker.isBallisticHook(s * 1.73, -1.03, s * 1.42, -3.14, { strict: true }), true, 'snap flat while climbing');
+    assert.equal(tracker.isBallisticHook(s * 1.73, -1.03, s * 1.42, -3.14), false, 'linking accepts the flattening');
+  }
+  // End to end: a sky peak that needs a sharp downward bend is not offered by the coaster
+  // (with the linking rules it would be: the bend is gravity-consistent).
+  const track = { points: [], cost: 0, score: 50, length: 100, anchor: 40 };
+  for (let k = 0; k < 8; k++) track.points.push({ x: 300 + 2 * k, y: 500 - 1.5 * k, f: 12 + k, t: (12 + k) / 30, size: 4, quality: .9, roundness: 1, compactness: .8 });
+  tracker.best = track; tracker.frame = 20;
+  const last = track.points.at(-1), peak = { x: Math.round(last.x + 2.2), y: Math.round(last.y + 0.6) };
+  const rgba = new Uint8ClampedArray(720 * 1280 * 4);
+  for (let i = 0; i < 720 * 1280; i++) rgba.set([120, 170, 230, 255], i * 4);
+  rgba.set([200, 200, 200, 255], (peak.y * 720 + peak.x) * 4);
+  const gray = new Uint8Array(720 * 1280);
+  for (let i = 0; i < gray.length; i++) gray[i] = (rgba[i * 4] * 77 + rgba[i * 4 + 1] * 150 + rgba[i * 4 + 2] * 29) >> 8;
+  assert.deepEqual(tracker.localFlightCandidatesForTrack(track, gray, rgba, 20 / 30), []);
+  const lenient = new MotionTracker(720, 1280);
+  lenient.isBallisticHook = (vx, vy, pvx, pvy) => tracker.isBallisticHook(vx, vy, pvx, pvy);
+  lenient.best = track; lenient.frame = 20;
+  assert.equal(lenient.localFlightCandidatesForTrack(track, gray, rgba, 20 / 30).length, 1, 'only the strict rule rejects it');
+});
+test('left- and right-moving flights keep the same number of points', () => {
+  const run = (dir, g, vx, v0) => {
+    const tracker = new MotionTracker(720, 1280);
+    for (let i = 0; i < 70; i++) {
+      tracker.frame = i;
+      const k = Math.max(0, i - 15);
+      const ball = { x: 360 + dir * vx * k, y: 900 - (v0 * k - 0.5 * g * k * k), t: i / 30, f: i, size: k === 0 ? 48 : Math.max(3, 30 - k * 2), quality: .88, moving: k > 0, roundness: 1.05, compactness: .8 };
+      tracker.link(ball.moving ? [ball] : [], [ball]);
+      tracker.updateSpots([ball]);
+    }
+    return tracker.result().points.length;
+  };
+  for (const [g, vx, v0] of [[.6, 1, 12], [.7, 3, 12], [.7, 2.5, 14], [.8, 3, 12], [.6, 2.5, 12]]) {
+    assert.equal(run(-1, g, vx, v0), run(1, g, vx, v0), `g=${g} vx=${vx} v0=${v0}`);
+  }
+});
+test('the result() hook trim treats a left-moving snap upright like a right-moving one', () => {
+  const trimmed = dir => {
+    const tracker = new MotionTracker(720, 1280);
+    const points = [];
+    for (let k = 0; k <= 15; k++) points.push({ x: 360 + dir * 3 * k, y: 1000 - 4 * k, f: k, t: k / 30, size: 6, quality: .9 });
+    points.push({ x: points.at(-1).x + dir * .3, y: points.at(-1).y - 5, f: 16, t: 16 / 30, size: 4, quality: .9 });
+    tracker.best = { points, cost: 0, score: 50, length: 100, anchor: 40, launchId: 'L1' };
+    return points.length - tracker.result().points.length;
+  };
+  assert.equal(trimmed(1), 1, 'diagonal-to-vertical snap trimmed when moving right');
+  assert.equal(trimmed(-1), 1, 'and when moving left');
+});
+test('a golfer highlight that does seed its own track still loses to the address ball (BALL-01)', () => {
+  // Unlike the creep above (too slow to ever seed), this highlight leaves its spot with a clear jump and
+  // keeps a real competing track for ~20 frames before the ball launches.
+  const tracker = new MotionTracker(720, 1280);
+  let highlightTrack = 0;
+  for (let i = 0; i < 160; i++) {
+    tracker.frame = i;
+    const t = i / 30, hl = Math.max(0, i - 104), bl = Math.max(0, i - 133);
+    const highlight = hl === 0 ? { x: 72, y: 865 } : { x: 75 + (hl - 1) * .5, y: 857 - (hl - 1) * 1.6 };
+    const ball = { x: 413 + bl * .15, y: 882 - bl * 8 };
+    const candidates = [
+      { ...ball, t, f: i, size: bl === 0 ? 196 : Math.max(40, 196 - bl * 8), quality: .9, moving: bl > 0, roundness: 1.12, compactness: .68 },
+      ...(hl <= 24 ? [{ ...highlight, t, f: i, size: hl ? 7 : 9, quality: .91, moving: hl > 0, roundness: 1.3, compactness: .6 }] : [])
+    ];
+    tracker.link(candidates.filter(p => p.moving), candidates);
+    tracker.updateSpots(candidates);
+    for (const track of tracker.tracks) if (Math.abs(track.points[0].x - 72) < 3) highlightTrack = Math.max(highlightTrack, track.points.length);
+  }
+  assert.ok(highlightTrack >= 8, `the highlight only reached ${highlightTrack} points`);
+  const points = tracker.result().points;
+  assert.ok(points.length >= 12, `${points.length} points found`);
+  assert.ok(Math.abs(points[0].x * 720 - 413) < 2, `started at x=${points[0].x * 720}`);
+  assert.ok(points[0].t >= 4.3, `started too early at t=${points[0].t}`);
 });

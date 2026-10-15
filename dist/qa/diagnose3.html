@@ -3,7 +3,10 @@
 <title>Flightline QA3</title>
 <pre id="out">starting…</pre>
 <script type="module">
-import { MotionTracker } from '../tracker.js?v=17';
+import { MotionTracker } from '../tracker.js?v=53';
+import { FRAME_ENGINES, pickEngine } from '../frame-source.js?v=53';
+// The frame-fed engines (v2 by default); ?engine=legacy for the old linker. Unknown names (and hf) throw.
+const engine = pickEngine(new URLSearchParams(location.search).get('engine'), FRAME_ENGINES);
 const out = document.getElementById('out');
 const log = (...a) => { out.textContent += a.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ') + '\n'; };
 // Match the app: blob object URL from a fetched file (user upload path).
@@ -80,7 +83,7 @@ for (const frame of captured) {
 }
 log('unique', unique);
 
-const tracker = new MotionTracker(w, h);
+const tracker = new MotionTracker(w, h, { engine });
 const diag = [];
 for (let i = 0; i < frames; i++) {
   tracker.detect(captured[i], i / fps);
@@ -103,7 +106,7 @@ for (let i = 0; i < frames; i++) {
   }
 }
 const result = tracker.result();
-window.__qa3 = { count: result.points.length, points: result.points, diag, unique, fromPlay, seekFills, seekTimeouts };
+window.__qa3 = { engine: tracker.engine, count: result.points.length, points: result.points, diag, unique, fromPlay, seekFills, seekTimeouts };
 log('RESULT', { count: result.points.length, first: result.points[0], last: result.points.at(-1) });
 const interesting = diag.filter(d => d.ballCand.length || d.spots.length || d.best);
 log('interesting', interesting.slice(0, 25));
