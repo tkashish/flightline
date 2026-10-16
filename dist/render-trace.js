@@ -110,11 +110,11 @@ export function toStab(cam, x, y, width, height) {
 }
 
 /**
- * Draw the trace at video time `time` on a width × height canvas: a soft glow (optional) and a core stroke, one path
- * while opaque; the fading end in a few constant-alpha runs (butt-capped, so they never overlap), and a head dot.
+ * Draw the trace at video time `time` on a width × height canvas: a soft glow (optional), the coloured stroke and a
+ * thin bright core (optional), one path while opaque; the fading end in a few constant-alpha runs (butt-capped, so they never overlap), and a head dot.
  * @returns {number} the number of points drawn (0: nothing)
  */
-export function drawTrace(ctx, curve, time, { width, height, camera = [], color = '#f5fa9b', glow = true, hold = true } = {}) {
+export function drawTrace(ctx, curve, time, { width, height, camera = [], color = '#f5fa9b', glow = true, hold = true, core = true } = {}) {
   const path = visibleTrace(curve, time, { hold });
   if (path.length < 2) return 0;
   const cam = cameraAt(camera, time), line = TRACE_WIDTH * Math.max(width, height) / 1280;
@@ -141,6 +141,9 @@ export function drawTrace(ctx, curve, time, { width, height, camera = [], color 
   // Soft under-stroke + fat core so tiny lateral jitter disappears into the ribbon.
   if (glow) stroke(line * 1.55, 0.45, line * 1.8);
   stroke(line, 1, 0);
+  // A thin near-white core down the middle: the bright "hot" centre of a launch-monitor tracer. It follows the same
+  // runs, so it fades with the line.
+  if (core) { ctx.strokeStyle = '#ffffff'; stroke(line * 0.36, 0.8, 0); ctx.strokeStyle = color; }
   const head = pts.at(-1);
   ctx.shadowBlur = 0; ctx.globalAlpha = head.a; ctx.fillStyle = '#ffffec';
   ctx.beginPath(); ctx.arc(head.x, head.y, line * 0.55, 0, Math.PI * 2); ctx.fill();

@@ -2,6 +2,7 @@ import { DEFAULT_ENGINE, ENGINES, analysisSchedule, frameFeed, measureFrameTimin
 import { bulkReviewReason, normalizeTrackReport, stopReason } from './track-status.js?v=53';
 import { createPicker } from './picker.js?v=53';
 import { DECODE_PATHS, createAnalysisWorker, startAnalysis } from './analysis-client.js?v=53';
+import { analyzeWithJev } from './jev-client.js?v=53';
 import { cameraAt, drawKnots, drawTrace as renderTrace, toStab, traceCurve } from './render-trace.js?v=53';
 
 const $ = id => document.getElementById(id);
@@ -472,7 +473,7 @@ function phaseClock(phases) {
  */
 async function analyze(signal, labels = {}) {
   const engine = state.engine = selectedEngine(), info = analysis = { engine, result: null, analysisMs: null, phases: {}, frameTiming: null }, t0 = performance.now();
-  try { await (engine === 'hf' ? analyzeHF(signal, labels, info) : analyzeFrames(signal, labels, engine, info)); }
+  try { await (engine === 'jev' ? analyzeJev(signal, labels, info) : engine === 'hf' ? analyzeHF(signal, labels, info) : analyzeFrames(signal, labels, engine, info)); }
   finally { info.analysisMs = performance.now() - t0; }
 }
 // hf progress phases (dist/hf/types.js PROGRESS_PHASES) on the progress bar: [from %, to %, label].
@@ -505,6 +506,23 @@ async function analyzeHF(signal, labels, info) {
   info.result = result;
   canvas.dataset.frameTimingDiagnostic = JSON.stringify(info.frameTiming);
   canvas.dataset.trackingDiagnostic = JSON.stringify(result);
+  applyTrackReport(normalizeTrackReport(result));
+}
+// Jev tracer phases (tools/jev/track.mjs) on the progress bar: [from %, to %].
+const JEV_STEPS = { probe: [1, 10], scan: [10, 15], impact: [15, 25], track: [25, 95], done: [100, 100] };
+/** jev: the local server (npm run dev:jev) traces the clip with Jev and returns an hf result, drawn as one. */
+async function analyzeJev(signal, labels, info) {
+  setBusy(true, labels.title || 'Finding your flight…', labels.detail || 'Tracing with Jev. Crops of this video are sent to TypeSafe.');
+  const result = await analyzeWithJev(state.file, {
+    signal, onProgress: p => {
+      const [lo, hi] = JEV_STEPS[p.phase] ?? [0, 100], pct = Math.round(lo + (hi - lo) * (p.total ? p.done / p.total : 1));
+      $('progress').value = pct;
+      $('busyText').textContent = p.message || 'Tracing…';
+      updateStatus(`Finding your flight… ${pct}%`);
+    }
+  });
+  info.result = result;
+  canvas.dataset.trackingDiagnostic = JSON.stringify({ ...result, diagnostics: { ...result.diagnostics, log: undefined } });
   applyTrackReport(normalizeTrackReport(result));
 }
 /** v2 and legacy: this page reads each sampled frame from the <video> and feeds it to the worker's tracker. */

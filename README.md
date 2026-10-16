@@ -6,6 +6,10 @@ See [architecture, progress, and known issues](ARCHITECTURE_AND_PROGRESS.md) for
 
 **Tracking V2 work** (automatic ball identity): start at [docs/TRACKING_V2_AUDIT.md](docs/TRACKING_V2_AUDIT.md), design [docs/TRACKING_V2_DESIGN.md](docs/TRACKING_V2_DESIGN.md), and measured baseline [docs/TRACKING_V2_BENCHMARK.md](docs/TRACKING_V2_BENCHMARK.md).
 
+## Jev tracer (branch jev-tracer)
+
+`npm run dev:jev` serves the app plus a local tracing API, then open http://127.0.0.1:5173/?engine=jev and upload a clip. The server keeps the TypeSafe Jev key (`~/.typesafe_key` or `TYPESAFE_API_KEY`) on this machine; **crops of the uploaded video are sent to TypeSafe's Jev**. Jev boxes the ball before the swing and on the first 5 frames after impact, then every 3rd frame; our code finds impact, fills the frames in between, smooths the path and adds a short fading "where it was heading" tail (`tools/jev/track.mjs`). Record with phone stabilization off: the tracer assumes a still camera. About $0.001–0.003 of Jev per clip. Command line: `node tools/jev/run.mjs clip.mp4 result.json`.
+
 ## Run
 
 `npm run dev` serves the buildless app at http://127.0.0.1:5173. There are no npm dependencies. `npm test` runs synthetic tracking and trace timing tests.

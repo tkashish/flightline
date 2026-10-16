@@ -5,7 +5,7 @@
 
 // Tracking engine names: the UI's ?engine= picks any (ENGINES); the frame-fed MotionTracker (worker init, QA pages,
 // the offline harness) runs v2 and legacy only, so that is the default list: hf never runs as legacy by omission.
-export const ENGINES = ['v2', 'legacy', 'hf'], FRAME_ENGINES = ['v2', 'legacy'], DEFAULT_ENGINE = 'v2';
+export const ENGINES = ['v2', 'legacy', 'hf', 'jev'], FRAME_ENGINES = ['v2', 'legacy'], DEFAULT_ENGINE = 'v2';
 
 const either = names => names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names.at(-1)}` : names[0];
 /** Tracking engine name out of `allowed`: empty means the default; any other name throws instead of silently picking one. */

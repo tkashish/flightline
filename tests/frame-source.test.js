@@ -575,14 +575,15 @@ test('frameHash matches only identical frames', () => {
 });
 
 test('pickEngine takes hf only where told to (the app): by default it names the frame-fed engines', () => {
-  assert.deepEqual([ENGINES, FRAME_ENGINES, DEFAULT_ENGINE], [['v2', 'legacy', 'hf'], ['v2', 'legacy'], 'v2']);
+  assert.deepEqual([ENGINES, FRAME_ENGINES, DEFAULT_ENGINE], [['v2', 'legacy', 'hf', 'jev'], ['v2', 'legacy'], 'v2']);
+  assert.equal(pickEngine('jev', ENGINES), 'jev');
   assert.equal(pickEngine('hf', ENGINES), 'hf');
   for (const v of [undefined, null, '']) assert.equal(pickEngine(v, ENGINES), 'v2');
   assert.equal(pickEngine('legacy', FRAME_ENGINES), 'legacy');
   // A caller that names no list (the offline harness, inspect-video.mjs) gets an error for hf, never a legacy run.
   for (const allowed of [undefined, FRAME_ENGINES]) assert.throws(() => pickEngine('hf', allowed), /^Error: Tracking engine "hf" cannot run here\. Use v2 or legacy\.$/);
   assert.throws(() => pickEngine('bogus'), /^Error: Unknown tracking engine "bogus"\. Use v2 or legacy\.$/);
-  assert.throws(() => pickEngine('bogus', ENGINES), /^Error: Unknown tracking engine "bogus"\. Use v2, legacy or hf\.$/);
+  assert.throws(() => pickEngine('bogus', ENGINES), /^Error: Unknown tracking engine "bogus"\. Use v2, legacy, hf or jev\.$/);
 });
 
 test('snapSourceFps takes a fallback rate; frameCentre is the middle of a frame\'s display interval', () => {
