@@ -7,8 +7,8 @@
  *           arc smooth even though the ball slows sharply on screen just after launch.
  *   timing  s(t): the points' distances made non-decreasing (pool-adjacent-violators), then a monotone cubic
  *           (PCHIP) through them, so the reveal never runs backwards.
- *   tail    past the last point, the arc continues along its own end direction and gently keeps its end bend,
- *           at the end speed slowing to half over the tail.
+ *   tail    past the last point, the trace continues the way it was going: its end velocity, slowing as it was
+ *           already slowing, and gravity pulling only down (never sideways).
  * Pure functions; positions in any one unit (px), times in seconds.
  */
 
@@ -112,19 +112,38 @@ export function fitFlightCurve(anchor, points, { smooth = 1, huber = 3 } = {}) {
   const at = t => { const s = clamp(sOf(t), 0, S); return { x: fx(s), y: fy(s) }; };
   const residuals = P.map(p => { const q = at(p.t); return Math.hypot(q.x - p.x, q.y - p.y); });
 
-  /** "Where it was heading": continue along the end direction, keeping the end bend, slowing to half speed. */
+  /**
+   * "Where it was heading", following the trace: the end velocity of the curve, slowing at the rate the visible
+   * flight was already slowing (drag and perspective), with gravity only pulling down (image y grows downward), never
+   * sideways. Velocity and its change come from the last ~0.4 s of the curve; the sideways direction is never turned.
+   */
   const tail = (horizonSec, stepSec) => {
-    const e = 0.02 * S, p1 = { x: fx(S), y: fy(S) }, p0 = { x: fx(S - e), y: fy(S - e) }, pm = { x: fx(S - 2 * e), y: fy(S - 2 * e) };
-    let tx = (p1.x - p0.x) / e, ty = (p1.y - p0.y) / e; const tn = Math.hypot(tx, ty) || 1; tx /= tn; ty /= tn;
-    // Curvature at the end (second difference), bounded so the tail bends at most like a circle of radius S/2.
-    let kx = (p1.x - 2 * p0.x + pm.x) / (e * e), ky = (p1.y - 2 * p0.y + pm.y) / (e * e);
-    const kn = Math.hypot(kx, ky), kMax = 2 / S; if (kn > kMax) { kx *= kMax / kn; ky *= kMax / kn; }
-    // End speed along the path, from the last 0.2 s.
-    const tEnd = ux.at(-1), back = Math.max(ux[0], tEnd - 0.2), v = Math.max(0, (sOf(tEnd) - sOf(back)) / Math.max(1e-3, tEnd - back));
-    const out = [];
+    const tEnd = ux.at(-1), span = Math.min(0.4, tEnd - anchor.t), n = 8, dt = span / n;
+    const vs = []; for (let i = 0; i < n; i++) { const t = tEnd - span + (i + 0.5) * dt, a = at(t - dt / 2), b = at(t + dt / 2); vs.push({ t: t - tEnd, vx: (b.x - a.x) / dt, vy: (b.y - a.y) / dt }); }
+    // Least-squares line through the velocities: value at the end and rate of change.
+    const mt = vs.reduce((s, v) => s + v.t, 0) / n, st = vs.reduce((s, v) => s + (v.t - mt) ** 2, 0) || 1e-9;
+    const lin = k => { const m = vs.reduce((s, v) => s + v[k], 0) / n, slope = vs.reduce((s, v) => s + (v.t - mt) * (v[k] - m), 0) / st; return { v0: m - slope * mt, a: slope }; };
+    const X = lin('vx'), Y = lin('vy'), sp0 = Math.hypot(X.v0, Y.v0);
+    if (!(sp0 > 1)) return [];
+    // Slowing: the observed loss of speed per second, as a fraction (0 if it was not slowing), at most 90% over the tail.
+    const along = (X.a * X.v0 + Y.a * Y.v0) / sp0, decay = Math.min(0.9 / horizonSec, Math.max(0, -along / sp0));
+    // Gravity pulls only down, and gently: a ball flying away from the camera slows sharply on screen, and that
+    // slowing must not be read as gravity. A rising ball may lose at most half its climb over the tail (it can level
+    // off, never dive); a falling one keeps falling at most as fast again.
+    const gMax = Y.v0 < 0 ? 0.5 * -Y.v0 / horizonSec : Math.abs(Y.v0) / horizonSec;
+    const g = clamp(Y.a + decay * Y.v0, 0, gMax);
+    // Falling is only allowed when the visible flight clearly peaked and was already coming down: its highest point
+    // (smallest y) lies well before the end and the end is clearly lower. Otherwise the tail never goes below the
+    // height where the ball was last seen (a ball flying away from the camera shrinks toward the horizon instead).
+    const p0 = at(tEnd), samples = Array.from({ length: 40 }, (_, i) => at(anchor.t + (tEnd - anchor.t) * (i + 1) / 40));
+    const iTop = samples.reduce((b, q, i) => (q.y < samples[b].y ? i : b), 0), pathLen = Math.max(1, S);
+    const peaked = iTop < 32 && p0.y - samples[iTop].y > 0.05 * pathLen;
+    const out = []; let x = p0.x, y = p0.y, vx = X.v0, vy = peaked ? Y.v0 : Math.min(0, Y.v0);
     for (let k = 1; k * stepSec <= horizonSec + 1e-9; k++) {
-      const tau = k * stepSec, u = v * (tau - tau * tau / (4 * horizonSec));   // speed falls linearly to half at the horizon
-      out.push({ t: tEnd + tau, x: p1.x + tx * u + 0.5 * kx * u * u, y: p1.y + ty * u + 0.5 * ky * u * u });
+      vx -= decay * vx * stepSec; vy += (g - decay * vy) * stepSec;
+      x += vx * stepSec; y += vy * stepSec;
+      if (!peaked && y > p0.y) break;
+      out.push({ t: tEnd + k * stepSec, x, y });
     }
     return out;
   };

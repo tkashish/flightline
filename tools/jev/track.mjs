@@ -35,7 +35,7 @@ export const JEV = Object.freeze({
   maxAskedMisses: 3,      // stop asking Jev after this many asked frames in a row without the ball
   firstSightFrames: 8,    // right after impact the club hides or blurs the ball: allow this many frames to first see it
   coastFrames: 8,         // our search may continue this many frames after Jev stops finding the ball
-  predictSec: 0.6,        // longest predicted tail (s), and at most half the observed flight
+  predictSec: 1.5,        // longest predicted tail (s), and at most as long as the observed flight
   maxFlightFrames: 300
 });
 
@@ -395,7 +395,7 @@ async function traceSwing(c, peak, jev, log, signal, onProgress, started) {
     const nb = track.filter(q => Math.abs(q.k - p.k) <= 3), us = nb.map(q => q.k - p.k), w = nb.length >= 5 ? 2 : 1;
     return { k: p.k, x: polyfit(us, nb.map(q => q.x), w)[0], y: polyfit(us, nb.map(q => q.y), w)[0], src: p.src };
   });
-  return buildResult(c, { A0, t0, smooth, jev, log, started, impact: IMPACT, addressFrame: ADDR, raw: track });
+  return buildResult(c, { A0, t0, smooth, jev, log, started, impact: IMPACT, addressFrame: ADDR, raw: track, ballD: A.d });
 }
 
 /** Rebuild a saved result's curve and tail from its own points (no Jev calls): for tuning the curve. */
@@ -403,11 +403,12 @@ export async function refit(video, saved) {
   const c = await openClip(video, (await import('node:fs')).mkdtempSync(join((await import('node:os')).tmpdir(), 'jev-refit-')), { framesToo: false });
   const d = saved.diagnostics, imp = d.log.find(l => l.step === 'impact' && l.lastPresent === d.impactFrame - 1) ?? d.log.filter(l => l.step === 'impact').at(-1);
   const raw = d.track.map(p => ({ ...p })), stats = { calls: d.jev.calls, tokens: d.jev.tokens, ms: d.jev.ms };
-  return buildResult(c, { A0: imp.at, t0: imp.t0, smooth: null, jev: { stats }, log: d.log, started: Date.now() - d.ms, impact: d.impactFrame, addressFrame: d.addressFrame, raw });
+  const used = d.log.filter(l => l.step === 'address' && l.refined).at(-1), ballD = used ? Math.max(4, 2 * Math.sqrt(used.refined.area / Math.PI)) : null;
+  return buildResult(c, { A0: imp.at, t0: imp.t0, smooth: null, jev: { stats }, log: d.log, started: Date.now() - d.ms, impact: d.impactFrame, addressFrame: d.addressFrame, raw, ballD });
 }
 
 /** HFResult: one smooth fitted flight curve (flight-curve.mjs), then a predicted tail that fades ("where it was heading"). */
-export function buildResult(c, { A0, t0, smooth, jev, log, started, impact, addressFrame, raw }) {
+export function buildResult(c, { A0, t0, smooth, jev, log, started, impact, addressFrame, raw, ballD = null }) {
   const { W, H, times, fps } = c, diag = Math.hypot(W, H), tOf = k => times[k] ?? times.at(-1) + (k - times.length + 1) / fps;
   // Jev answers count fully; our search a bit less; positions read off a curve barely (they only bridge gaps).
   const WEIGHT = { jev: 1, search: 0.7, coast: 0.5, curve: 0.15 };
@@ -422,12 +423,15 @@ export function buildResult(c, { A0, t0, smooth, jev, log, started, impact, addr
     const q = fit.at(t);
     points.push({ t, x: q.x / W, y: q.y / H, status: curveStatus(t, obsT, half) });
   }
-  // Predicted tail along the arc's own end direction and bend; it fades out, or stops where it leaves the frame.
-  const observedSec = tLast - t0, horizon = Math.min(JEV.predictSec, 0.5 * observedSec), tailPts = horizon > gap ? fit.tail(horizon, gap) : [];
+  // "Where it was heading": the trace continues the way it was going (flight-curve.mjs tail), up to the length of the
+  // visible flight and at most JEV.predictSec; it fades over its second half, or stops where it leaves the frame.
+  const observedSec = tLast - t0, horizon = Math.min(JEV.predictSec, observedSec), raw2 = horizon > gap ? fit.tail(horizon, gap) : [];
+  const tailPts = raw2.map((q, i) => ({ ...q, alpha: clamp(2 * (1 - (i + 1) / raw2.length), 0, 1) }));
   let endType = 'fade';
-  for (const [i, q] of tailPts.entries()) {
+  for (const q of tailPts) {
     if (q.x < 0 || q.y < 0 || q.x > W || q.y > H) { endType = 'exit'; break; }
-    points.push({ t: tLast + (i + 1) * gap, x: q.x / W, y: q.y / H, status: 'predicted', alpha: Math.max(0, 1 - (i + 1) / tailPts.length) });
+    if (q.t <= points.at(-1).t + 1e-9) continue;
+    points.push({ t: q.t, x: q.x / W, y: q.y / H, status: 'predicted', alpha: clamp(q.alpha, 0, Math.min(1, points.at(-1).alpha ?? 1)) });
   }
   const predicted = points.filter(p => p.status === 'predicted');
   if (predicted.length && endType === 'fade') predicted.at(-1).alpha = 0;

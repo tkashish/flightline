@@ -12,7 +12,7 @@ const query = new URLSearchParams(location.search);
 // ?bench=1: the benchmark hook (tests/bench/run-browser.mjs) reads window.__flightline{Bench,LastResult,LastExport}.
 const BENCH = query.get('bench') === '1', BUILD = Number(new URL(import.meta.url).searchParams.get('v')) || null;
 const state = {
-  demo: true, time: 0, playing: true, points: [], camera: [], color: '#f5fa9b', glow: true, hold: true,
+  demo: true, time: 0, playing: true, points: [], camera: [], color: '#f5fa9b', glow: true, hold: true, heading: true,
   showTrace: true, editing: false, busy: false, exporting: false, url: null, file: null, controller: null, history: [], bulk: false,
   report: null, trackStatus: null, reasonCodes: [], confidence: null, engine: 'v2', dense: false, exportable: false, downloadURL: null, batchURLs: []
 };
@@ -589,12 +589,19 @@ async function analyzeFrames(signal, labels, engine, info) {
     applyTrackReport(report);
   } finally { mark(null); worker.terminate(); }
 }
+let tailless = { from: null, list: [] };
+/** The points without their predicted tail (kept per points array, so the curve cache still hits). */
+function observedOnly(points) {
+  if (tailless.from !== points) tailless = { from: points, list: points.filter(p => p.status !== 'predicted') };
+  return tailless.list;
+}
 /** The tracer at `time` (render-trace.js: the same drawing for the preview and the export). */
 function drawTrace(time) {
   if (!state.showTrace) return;
   // Abstention: never invent a tracer when automatic tracking failed.
   if (!state.demo && (state.trackStatus === 'no_reliable_track' || state.points.length < 2)) return;
-  const source = state.demo ? demoPoints : state.points, dense = !state.demo && state.dense;
+  // "Show where it was heading" off: the predicted tail is left out (the trace ends at the last sighting).
+  const source = state.demo ? demoPoints : state.heading ? state.points : observedOnly(state.points), dense = !state.demo && state.dense;
   const clipEnd = !state.demo && Number.isFinite(video.duration) ? video.duration : Infinity;
   if (curve?.source !== source || curve.dense !== dense || curve.clipEnd !== clipEnd) curve = { ...traceCurve(source, { dense, clipEnd }), source };
   renderTrace(ctx, curve, time, { width: canvas.width, height: canvas.height, camera: state.demo ? [] : state.camera, color: state.color, glow: state.glow, hold: state.hold });
@@ -765,6 +772,10 @@ function setTracerGlow(on) {
   state.glow = on;
   $('glow').checked = on;
 }
+function setTracerHeading(on) {
+  state.heading = on;
+  $('heading').checked = on;
+}
 function setTracerHold(on) {
   state.hold = on;
   $('hold').checked = on;
@@ -772,6 +783,7 @@ function setTracerHold(on) {
 document.querySelectorAll('.swatch').forEach(button => button.onclick = () => setTracerColor(button.dataset.color));
 $('glow').onchange = event => setTracerGlow(event.target.checked);
 $('hold').onchange = event => setTracerHold(event.target.checked);
+$('heading').onchange = event => setTracerHeading(event.target.checked);
 $('editTrace').onclick = () => setEditing(true); $('doneEditing').onclick = () => setEditing(false);
 for (const [id, delta] of [['backFrame', -1 / 30], ['forwardFrame', 1 / 30]]) $(id).onclick = () => { video.pause(); seek(video, video.currentTime + delta).catch(error => toast(error.message)); };
 // History holds the replaced point arrays themselves, so Undo can land back on the automatic track.
