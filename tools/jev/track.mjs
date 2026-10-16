@@ -34,6 +34,7 @@ export const JEV = Object.freeze({
   onPathConf: 0.35,       // ... or down to this when it lands right on the predicted path
   maxAskedMisses: 3,      // stop asking Jev after this many asked frames in a row without the ball
   firstSightFrames: 8,    // right after impact the club hides or blurs the ball: allow this many frames to first see it
+  maxGapSec: 0.25,        // the ball may go unseen this long mid-flight (bright sky near the horizon, the club) before we stop
   coastFrames: 8,         // our search may continue this many frames after Jev stops finding the ball
   predictSec: 1.5,        // longest predicted tail (s), and at most as long as the observed flight
   maxFlightFrames: 300
@@ -299,14 +300,15 @@ async function traceSwing(c, peak, jev, log, signal, onProgress, started) {
     onProgress({ phase: 'track', done: k - IMPACT, total: end - IMPACT, message: 'Following the ball…' });
     const isAsk = u < JEV.launchFrames || (u - JEV.launchFrames) % JEV.everyNth === 0;
     if (!pts.length && u >= JEV.firstSightFrames) { log.push({ step: 'stop', k, why: `no ball in the first ${JEV.firstSightFrames} frames` }); break; }
-    if (pts.length && askedMisses >= JEV.maxAskedMisses) {
-      // Jev stopped finding the ball: our search may continue while it keeps finding a clear dot on the path.
-      if (pts.length < 4 || coast >= JEV.coastFrames) break;
+    // The ball can vanish for a moment (crossing the bright sky near the horizon, behind the club): keep looking
+    // along the predicted line for up to maxGapSec without a sighting before giving up.
+    if (pts.length && k - pts.at(-1).k > Math.round(JEV.maxGapSec * c.fps)) { log.push({ step: 'stop', k, why: `not seen for ${JEV.maxGapSec} s` }); break; }
+    if (pts.length >= 2 && askedMisses >= JEV.maxAskedMisses && !isAsk) {
+      // Jev keeps missing: between its questions our own search looks for a clear dot on the line.
       const gl = predict(pts, k, { line: true });
       if (gl.x < 0 || gl.y < 0 || gl.x >= W || gl.y >= H) { log.push({ step: 'stop', k, why: 'left the frame' }); break; }
-      const f = search(c, k, gl, 6);
-      if (!f || turnsBack(pts, f, A.d)) { log.push({ step: 'stop', k, why: 'our search lost the ball' }); break; }
-      pts.push({ k, x: f.x, y: f.y, src: 'coast' }); coast++;
+      const f = coast < JEV.coastFrames ? search(c, k, gl, 6) : null;
+      if (f && !turnsBack(pts, f, A.d)) { pts.push({ k, x: f.x, y: f.y, src: 'coast' }); coast++; }
       continue;
     }
     if (!isAsk) continue;
@@ -316,7 +318,9 @@ async function traceSwing(c, peak, jev, log, signal, onProgress, started) {
       guess = k - pts.at(-1).k <= 1 ? predict(pts, k) : predict(pts, k, { line: true });
       if (guess.x < -20 || guess.x > W + 20 || guess.y < -20 || guess.y > H + 20) { log.push({ step: 'stop', k, why: 'predicted out of frame' }); break; }
       cx = guess.x; cy = guess.y;
-      // Two points do not pin the speed yet: keep the big crop until there are three.
+      // Two points do not pin the speed yet: a medium crop around the straight-line guess (the whole frame makes a
+      // small ball tiny for Jev); from three points on, a crop sized to the expected movement.
+      if (pts.length === 2) { const gl = predict(pts, k, { line: true }); cx = gl.x; cy = gl.y; size = 640; }
       if (pts.length >= 3) size = clamp(Math.round(256 + 4 * predict(pts, k, { line: true }).step * (k - pts.at(-1).k)), 384, 1024);   // straight-line speed: a curve can blow up far ahead
     }
     const cr = crop(c, `fly-${k}`, k, cx, cy, size), ans = await jev.ask(cr, Q_FLY);
@@ -342,7 +346,7 @@ async function traceSwing(c, peak, jev, log, signal, onProgress, started) {
       used: look === 'ball' ? 'ball' : 'streak', guess, crop: cropInfo(cr), boxPx: fb, refined: ref, answers: ans, ms: jev.stats.last?.ms, tokens: jev.stats.last?.tokens });
     if (why) {
       askedMisses++;
-      if (pts.length >= 4) {
+      if (pts.length >= 2) {
         const gl = predict(pts, k, { line: true }), f = search(c, k, gl, 6);
         if (f && !turnsBack(pts, f, A.d)) { pts.push({ k, x: f.x, y: f.y, src: 'search' }); log.push({ step: 'search-on-miss', k, at: f }); }
       }
